@@ -350,16 +350,8 @@ export default function FumikiriApp() {
         {/* 踏切内の道路（線路と交差する部分） */}
         <div className="absolute left-0 w-full" 
           style={{top:"calc(62% - 37%)",height:40,background:"#484848",zIndex:12}}>
-          {/* 踏切道路の白線 */}
           <div className="absolute left-2 top-0 bottom-0" style={{width:4,background:"#fff",opacity:0.8}}/>
           <div className="absolute right-2 top-0 bottom-0" style={{width:4,background:"#fff",opacity:0.8}}/>
-          {/* 踏切マーク */}
-          <div className="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2"
-            style={{width:30,height:30,background:"#fff",borderRadius:"50%",
-              display:"flex",alignItems:"center",justifyContent:"center",
-              fontSize:12,fontWeight:"bold",color:"#e8001a"}}>
-            踏切
-          </div>
         </div>
       </div>
 
@@ -843,8 +835,6 @@ function FumikiriPole({isWarning,barrierAngle,side}:{isWarning:boolean;barrierAn
 
       {/* ===== X字踏切標識（上部・大きめ） ===== */}
       <g transform="translate(34,32)">
-        {/* 外枠円 */}
-        <circle cx="0" cy="0" r="28" fill="#fff" stroke="#1a1a1a" strokeWidth="3"/>
         {/* X棒1（左上→右下）黒黄ストライプ */}
         <g transform="rotate(-42)">
           <clipPath id={`cp1-${side}`}>
