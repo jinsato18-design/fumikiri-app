@@ -31,12 +31,15 @@ const TRAINS: TrainDef[] = [
   { id:"steam",      label:"きかんしゃ",     emoji:"🚂", speed:4.5, color1:"#2c2c2c", color2:"#111",    accent:"#cc4400" },
 ];
 
-const CROSSER_DEFS: { type: CrosserType; emoji: string; emojiLeft: string; speed: number }[] = [
-  { type:"person", emoji:"🚶", emojiLeft:"🚶", speed:0.35 },
-  { type:"child",  emoji:"🧒", emojiLeft:"🧒", speed:0.28 },
-  { type:"car",    emoji:"🚗", emojiLeft:"🚙", speed:1.2  },
-  { type:"bike",   emoji:"🚲", emojiLeft:"🚲", speed:0.6  },
+const CROSSER_DEFS: { type: CrosserType; speed: number }[] = [
+  { type:"person", speed:0.35 },
+  { type:"child",  speed:0.28 },
+  { type:"car",    speed:1.2  },
+  { type:"bike",   speed:0.6  },
 ];
+
+// 道路幅（px）
+const ROAD_W = 80;
 
 // ─────────────────────────────────────────────
 // Audio helpers
@@ -300,13 +303,13 @@ export default function FumikiriApp() {
   const addCrosser = useCallback((type: CrosserType)=>{
     if(!isOpen) return;
     const def = CROSSER_DEFS.find(d=>d.type===type)!;
-    const fromBottom = Math.random()>0.5; // 手前(下)から来るか、奥(上)から来るか
+    const fromBottom = Math.random()>0.5;
     const newC: Crosser = {
       id: ++crosserIdSeq,
       type,
-      emoji: def.emoji,
-      y: fromBottom ? 2 : 90,   // 手前=bottom 2vh, 奥=bottom 90vh相当
-      dir: fromBottom ? 1 : -1, // 1=奥へ(y増加), -1=手前へ(y減少)
+      emoji: type,   // SVGで描画するのでtypeをそのまま
+      y: fromBottom ? 2 : 88,
+      dir: fromBottom ? 1 : -1,
       speed: def.speed,
       crashed: false,
     };
@@ -355,18 +358,31 @@ export default function FumikiriApp() {
         {[0,1,2,3,4].map(i=><line key={i} x1={252+i*24} y1="45" x2={252+i*24} y2="110" stroke="#5a4020" strokeWidth="1.5"/>)}
       </svg>
 
-      {/* 道路 */}
+      {/* 道路（手前側: bottom 0〜62%） */}
       <div className="absolute left-1/2 -translate-x-1/2"
-        style={{bottom:0,width:190,height:"37%",background:"#484848"}}>
+        style={{bottom:0, width:ROAD_W, height:"62%", background:"#484848", zIndex:8}}>
         <div className="absolute inset-0"
-          style={{background:"repeating-linear-gradient(180deg,#484848 0,#484848 17px,#383838 17px,#383838 20px)"}}/>
-        {/* 白線：全て同じ高さ・幅に統一 */}
-        {[0,1,2,3,4,5,6].map(i=>(
+          style={{background:"repeating-linear-gradient(180deg,#484848 0,#484848 14px,#383838 14px,#383838 16px)"}}/>
+        {/* センターライン */}
+        {Array.from({length:12}).map((_,i)=>(
           <div key={i} className="absolute left-1/2 -translate-x-1/2"
-            style={{width:10,height:24,background:"#fff",top:8+i*38,borderRadius:2}}/>
+            style={{width:4,height:18,background:"#fff",bottom:8+i*42,borderRadius:2}}/>
         ))}
-        <div className="absolute left-2 top-0 bottom-0" style={{width:4,background:"#fff",opacity:0.55}}/>
-        <div className="absolute right-2 top-0 bottom-0" style={{width:4,background:"#fff",opacity:0.55}}/>
+        <div className="absolute left-2 top-0 bottom-0" style={{width:3,background:"#fff",opacity:0.6}}/>
+        <div className="absolute right-2 top-0 bottom-0" style={{width:3,background:"#fff",opacity:0.6}}/>
+      </div>
+
+      {/* 道路（奥側: 線路より上 62%〜75%） */}
+      <div className="absolute left-1/2 -translate-x-1/2"
+        style={{bottom:"62%", width:ROAD_W, height:"13%", background:"#484848", zIndex:8}}>
+        <div className="absolute inset-0"
+          style={{background:"repeating-linear-gradient(180deg,#484848 0,#484848 14px,#383838 14px,#383838 16px)"}}/>
+        {Array.from({length:3}).map((_,i)=>(
+          <div key={i} className="absolute left-1/2 -translate-x-1/2"
+            style={{width:4,height:18,background:"#fff",bottom:8+i*42,borderRadius:2}}/>
+        ))}
+        <div className="absolute left-2 top-0 bottom-0" style={{width:3,background:"#fff",opacity:0.6}}/>
+        <div className="absolute right-2 top-0 bottom-0" style={{width:3,background:"#fff",opacity:0.6}}/>
       </div>
 
       {/* 縁石・歩道 */}
@@ -394,14 +410,19 @@ export default function FumikiriApp() {
       {crossers.map(c=>(
         <div key={c.id} className="absolute"
           style={{
-            left:"calc(50% - 14px)",  // 道路中央に固定
+            left:`calc(50% - ${ROAD_W/2}px)`,
             bottom:`${c.y}%`,
-            fontSize: c.type==="car"?26:20,
+            width:ROAD_W,
             zIndex:22,
             filter: c.crashed?"grayscale(1) brightness(0.4)":"none",
             transition:"filter 0.2s",
+            display:"flex",
+            justifyContent:"center",
           }}>
-          {c.crashed?"💥":c.emoji}
+          {c.crashed
+            ? <span style={{fontSize:24}}>💥</span>
+            : <CrosserSVG type={c.type} dir={c.dir} roadW={ROAD_W}/>
+          }
         </div>
       ))}
 
@@ -444,7 +465,7 @@ export default function FumikiriApp() {
               border:isOpen?"2px solid #27ae60":"2px solid #aaa",
               boxShadow:isOpen?"0 3px 8px rgba(0,0,0,0.2)":"none",
             }}>
-            {d.emoji}
+            {d.type==="person"?"🚶":d.type==="child"?"🧒":d.type==="car"?"🚗":"🚲"}
           </button>
         ))}
       </div>
@@ -558,6 +579,97 @@ function Building({x,w,h,color,roofColor,windows}:{x:string;w:number;h:number;co
         )}
       </svg>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// 渡り者SVG（俯瞰視点・進行方向対応）
+// ─────────────────────────────────────────────
+// dir: 1=奥へ(上方向), -1=手前へ(下方向)
+function CrosserSVG({type, dir, roadW}:{type:CrosserType; dir:1|-1; roadW:number}){
+  // 車: 道路幅の45%、人: 15%、自転車: 20%
+  const carW   = Math.round(roadW * 0.45);
+  const personW= Math.round(roadW * 0.15);
+  const bikeW  = Math.round(roadW * 0.20);
+
+  // 奥向き(dir=1)=上=rotate(0)、手前向き(dir=-1)=下=rotate(180)
+  const rot = dir === 1 ? 0 : 180;
+
+  if(type === "car"){
+    const w=carW, h=Math.round(carW*1.8);
+    return(
+      <svg width={w} height={h} viewBox="0 0 40 72"
+        style={{transform:`rotate(${rot}deg)`,display:"block"}}>
+        {/* 車体 */}
+        <rect x="3" y="8" width="34" height="56" rx="6" fill="#e74c3c"/>
+        {/* ルーフ */}
+        <rect x="7" y="18" width="26" height="28" rx="4" fill="#c0392b"/>
+        {/* フロントガラス */}
+        <rect x="8" y="20" width="24" height="14" rx="2" fill="#aee6ff" opacity="0.85"/>
+        {/* リアガラス */}
+        <rect x="8" y="36" width="24" height="10" rx="2" fill="#aee6ff" opacity="0.6"/>
+        {/* ヘッドライト（上=前） */}
+        <rect x="5"  y="8"  width="10" height="5" rx="2" fill="#fffaaa"/>
+        <rect x="25" y="8"  width="10" height="5" rx="2" fill="#fffaaa"/>
+        {/* テールライト（下=後） */}
+        <rect x="5"  y="59" width="10" height="5" rx="2" fill="#ff4444"/>
+        <rect x="25" y="59" width="10" height="5" rx="2" fill="#ff4444"/>
+        {/* タイヤ */}
+        <rect x="0"  y="12" width="6" height="12" rx="2" fill="#222"/>
+        <rect x="34" y="12" width="6" height="12" rx="2" fill="#222"/>
+        <rect x="0"  y="48" width="6" height="12" rx="2" fill="#222"/>
+        <rect x="34" y="48" width="6" height="12" rx="2" fill="#222"/>
+      </svg>
+    );
+  }
+
+  if(type === "bike"){
+    const w=bikeW, h=Math.round(bikeW*2.2);
+    return(
+      <svg width={w} height={h} viewBox="0 0 20 44"
+        style={{transform:`rotate(${rot}deg)`,display:"block"}}>
+        {/* フレーム */}
+        <line x1="10" y1="8" x2="10" y2="36" stroke="#555" strokeWidth="2"/>
+        <line x1="4"  y1="20" x2="16" y2="20" stroke="#555" strokeWidth="2"/>
+        {/* 前輪（上） */}
+        <circle cx="10" cy="8"  r="6" fill="none" stroke="#333" strokeWidth="2.5"/>
+        <circle cx="10" cy="8"  r="2" fill="#555"/>
+        {/* 後輪（下） */}
+        <circle cx="10" cy="36" r="6" fill="none" stroke="#333" strokeWidth="2.5"/>
+        <circle cx="10" cy="36" r="2" fill="#555"/>
+        {/* ハンドル */}
+        <line x1="6" y1="12" x2="14" y2="12" stroke="#444" strokeWidth="2"/>
+        {/* サドル */}
+        <line x1="6" y1="24" x2="14" y2="24" stroke="#444" strokeWidth="2"/>
+        {/* 人（乗り手） */}
+        <circle cx="10" cy="18" r="3" fill="#f5a623"/>
+        <rect x="8" y="21" width="4" height="5" rx="1" fill="#3498db"/>
+      </svg>
+    );
+  }
+
+  // person / child
+  const w=personW, h=Math.round(personW*3.2);
+  const isChild = type==="child";
+  const skinColor = isChild ? "#f5c6a0" : "#f5a623";
+  const bodyColor = isChild ? "#e74c3c" : "#3498db";
+  return(
+    <svg width={w} height={h} viewBox="0 0 16 52"
+      style={{transform:`rotate(${rot}deg)`,display:"block"}}>
+      {/* 頭 */}
+      <circle cx="8" cy="6" r="5" fill={skinColor}/>
+      {/* 体 */}
+      <rect x="4" y="11" width="8" height="16" rx="2" fill={bodyColor}/>
+      {/* 腕（前に向かって伸びる） */}
+      <line x1="4"  y1="14" x2="0"  y2="22" stroke={bodyColor} strokeWidth="2.5" strokeLinecap="round"/>
+      <line x1="12" y1="14" x2="16" y2="22" stroke={bodyColor} strokeWidth="2.5" strokeLinecap="round"/>
+      {/* 脚（歩行ポーズ） */}
+      <line x1="6"  y1="27" x2="3"  y2="42" stroke={skinColor} strokeWidth="2.5" strokeLinecap="round"/>
+      <line x1="10" y1="27" x2="13" y2="42" stroke={skinColor} strokeWidth="2.5" strokeLinecap="round"/>
+      {/* 靴 */}
+      <ellipse cx="3"  cy="43" rx="3" ry="2" fill="#333"/>
+      <ellipse cx="13" cy="43" rx="3" ry="2" fill="#333"/>
+    </svg>
   );
 }
 
