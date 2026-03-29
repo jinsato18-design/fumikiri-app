@@ -71,6 +71,15 @@ function playBell(ctx: AudioContext, t: number) {
 }
 
 function createRumble(ctx: AudioContext, type: TrainType): {stop:()=>void} {
+  // コンプレッサーで音割れなく大音量に
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -12;
+  comp.knee.value = 6;
+  comp.ratio.value = 4;
+  comp.attack.value = 0.003;
+  comp.release.value = 0.1;
+  comp.connect(ctx.destination);
+
   // ── ベースノイズ（低音ゴロゴロ） ──
   const len = ctx.sampleRate*3;
   const buf = ctx.createBuffer(1,len,ctx.sampleRate);
@@ -79,17 +88,16 @@ function createRumble(ctx: AudioContext, type: TrainType): {stop:()=>void} {
   const src=ctx.createBufferSource(); src.buffer=buf; src.loop=true;
   const bpf=ctx.createBiquadFilter(); bpf.type="bandpass";
   bpf.frequency.value=type==="shinkansen"?160:type==="steam"?100:190; bpf.Q.value=0.7;
-  const lpf=ctx.createBiquadFilter(); lpf.type="lowpass"; lpf.frequency.value=type==="shinkansen"?350:550;
+  const lpf=ctx.createBiquadFilter(); lpf.type="lowpass"; lpf.frequency.value=type==="shinkansen"?400:650;
   const lfo=ctx.createOscillator(); const lfoG=ctx.createGain();
   lfo.type="square";
   lfo.frequency.value=type==="shinkansen"?13:type==="steam"?3.5:type==="express"?9:6;
-  lfoG.gain.value=type==="shinkansen"?0.08:0.18;
+  lfoG.gain.value=type==="shinkansen"?0.15:0.30;
   lfo.connect(lfoG);
   const master=ctx.createGain();
-  // 音量を大幅アップ
-  master.gain.value=type==="shinkansen"?0.18:type==="steam"?0.38:0.28;
+  master.gain.value=type==="shinkansen"?0.55:type==="steam"?0.80:0.70;
   lfoG.connect(master.gain);
-  src.connect(bpf); bpf.connect(lpf); lpf.connect(master); master.connect(ctx.destination);
+  src.connect(bpf); bpf.connect(lpf); lpf.connect(master); master.connect(comp);
   src.start(); lfo.start();
 
   // ── ガタンゴトン衝撃音（レールの継ぎ目） ──
@@ -98,16 +106,17 @@ function createRumble(ctx: AudioContext, type: TrainType): {stop:()=>void} {
     const intervalMs = type==="steam" ? 600 : type==="express" ? 280 : 380;
     chunkTimer = setInterval(()=>{
       const t = ctx.currentTime;
-      const impLen = Math.floor(ctx.sampleRate * 0.055);
+      const impLen = Math.floor(ctx.sampleRate * 0.06);
       const impBuf = ctx.createBuffer(1, impLen, ctx.sampleRate);
       const impD = impBuf.getChannelData(0);
-      for(let i=0;i<impLen;i++) impD[i] = (Math.random()*2-1) * Math.exp(-i/(impLen*0.25));
+      for(let i=0;i<impLen;i++) impD[i] = (Math.random()*2-1) * Math.exp(-i/(impLen*0.2));
       const impSrc = ctx.createBufferSource(); impSrc.buffer = impBuf;
-      const impLpf = ctx.createBiquadFilter(); impLpf.type="lowpass"; impLpf.frequency.value=320;
-      // 衝撃音も大きく
-      const impG = ctx.createGain(); impG.gain.setValueAtTime(0.9,t); impG.gain.exponentialRampToValueAtTime(0.001,t+0.055);
-      impSrc.connect(impLpf); impLpf.connect(impG); impG.connect(ctx.destination);
-      impSrc.start(t); impSrc.stop(t+0.06);
+      const impLpf = ctx.createBiquadFilter(); impLpf.type="lowpass"; impLpf.frequency.value=350;
+      const impG = ctx.createGain();
+      impG.gain.setValueAtTime(1.2, t);
+      impG.gain.exponentialRampToValueAtTime(0.001, t+0.06);
+      impSrc.connect(impLpf); impLpf.connect(impG); impG.connect(comp);
+      impSrc.start(t); impSrc.stop(t+0.07);
     }, intervalMs);
   }
 
@@ -361,41 +370,8 @@ export default function FumikiriApp() {
         {[0,1,2,3,4].map(i=><line key={i} x1={252+i*24} y1="45" x2={252+i*24} y2="110" stroke="#5a4020" strokeWidth="1.5"/>)}
       </svg>
 
-      {/* 道路（手前側: bottom 0〜62%）— 45度後方視点 */}
-      <div className="absolute left-1/2 -translate-x-1/2"
-        style={{
-          bottom:0, width:ROAD_W, height:"62%",
-          background:"#484848", zIndex:8,
-          transformOrigin:"bottom center",
-          transform:"perspective(400px) rotateX(8deg)",
-        }}>
-        <div className="absolute inset-0"
-          style={{background:"repeating-linear-gradient(180deg,#484848 0,#484848 14px,#383838 14px,#383838 16px)"}}/>
-        {Array.from({length:12}).map((_,i)=>(
-          <div key={i} className="absolute left-1/2 -translate-x-1/2"
-            style={{width:4,height:18,background:"#fff",bottom:8+i*42,borderRadius:2}}/>
-        ))}
-        <div className="absolute left-2 top-0 bottom-0" style={{width:3,background:"#fff",opacity:0.6}}/>
-        <div className="absolute right-2 top-0 bottom-0" style={{width:3,background:"#fff",opacity:0.6}}/>
-      </div>
-
-      {/* 道路（奥側: 線路より上 62%〜75%）— 同じ視点 */}
-      <div className="absolute left-1/2 -translate-x-1/2"
-        style={{
-          bottom:"62%", width:ROAD_W, height:"13%",
-          background:"#484848", zIndex:8,
-          transformOrigin:"bottom center",
-          transform:"perspective(400px) rotateX(8deg)",
-        }}>
-        <div className="absolute inset-0"
-          style={{background:"repeating-linear-gradient(180deg,#484848 0,#484848 14px,#383838 14px,#383838 16px)"}}/>
-        {Array.from({length:3}).map((_,i)=>(
-          <div key={i} className="absolute left-1/2 -translate-x-1/2"
-            style={{width:4,height:18,background:"#fff",bottom:8+i*42,borderRadius:2}}/>
-        ))}
-        <div className="absolute left-2 top-0 bottom-0" style={{width:3,background:"#fff",opacity:0.6}}/>
-        <div className="absolute right-2 top-0 bottom-0" style={{width:3,background:"#fff",opacity:0.6}}/>
-      </div>
+      {/* 道路（SVG台形で奥行き表現: 手前が広く奥が狭い） */}
+      <RoadSVG/>
 
       {/* 縁石・歩道 */}
       <div className="absolute left-0 w-full" style={{bottom:"37%",height:10,background:"#999",zIndex:5}}/>
@@ -686,6 +662,97 @@ function CrosserSVG({type, dir, roadW}:{type:CrosserType; dir:1|-1; roadW:number
         <circle cx="12" cy="7" r="1.2" fill="#333"/>
         <path d="M6,10 Q9,12 12,10" stroke="#333" strokeWidth="1" fill="none"/>
       </>}
+    </svg>
+  );
+}
+
+// ─────────────────────────────────────────────
+// 道路SVG（台形で奥行き表現）
+// 画面幅W、画面高さH想定で絶対座標を使う
+// 手前(bottom=0)で幅ROAD_W、線路(bottom=62%)で幅ROAD_W*0.55、
+// 奥(bottom=75%)で幅ROAD_W*0.45 に収束する台形
+// ─────────────────────────────────────────────
+function RoadSVG() {
+  // viewBox座標系: 幅1000, 高さ1000（%をそのまま使う）
+  // 画面中央 x=500
+  // bottom=0   → y=1000, 幅=ROAD_W相当=80px → vb換算80
+  // bottom=62% → y=380,  幅=50
+  // bottom=75% → y=250,  幅=38
+  const cx = 500;
+  const yBottom = 1000; // 手前端
+  const yRail   = 380;  // 線路位置 (1000*(1-0.62))
+  const yFar    = 250;  // 奥端     (1000*(1-0.75))
+
+  const wBottom = 80;
+  const wRail   = 50;
+  const wFar    = 38;
+
+  // 手前側道路（台形: bottom〜線路）
+  const frontL = [
+    [cx - wBottom/2, yBottom],
+    [cx + wBottom/2, yBottom],
+    [cx + wRail/2,   yRail],
+    [cx - wRail/2,   yRail],
+  ];
+  // 奥側道路（台形: 線路〜奥）
+  const backL = [
+    [cx - wRail/2, yRail],
+    [cx + wRail/2, yRail],
+    [cx + wFar/2,  yFar],
+    [cx - wFar/2,  yFar],
+  ];
+
+  const pts = (arr: number[][]) => arr.map(p=>p.join(",")).join(" ");
+
+  // センターライン（破線）の位置を計算
+  // 手前側: y=yBottom〜yRail を8分割
+  const frontLines = Array.from({length:8},(_,i)=>{
+    const t1 = (i*2+0.2)/16;
+    const t2 = (i*2+0.8)/16;
+    const y1 = yBottom - (yBottom-yRail)*t1;
+    const y2 = yBottom - (yBottom-yRail)*t2;
+    const x1 = cx - (wBottom/2 + (wRail/2-wBottom/2)*(y1-yBottom)/(yRail-yBottom))*0.05;
+    const x2 = cx - (wBottom/2 + (wRail/2-wBottom/2)*(y2-yBottom)/(yRail-yBottom))*0.05;
+    return {y1,y2,x1:cx,x2:cx};
+  });
+  // 奥側: y=yRail〜yFar を3分割
+  const backLines = Array.from({length:3},(_,i)=>{
+    const t1 = (i*2+0.2)/6;
+    const t2 = (i*2+0.8)/6;
+    const y1 = yRail - (yRail-yFar)*t1;
+    const y2 = yRail - (yRail-yFar)*t2;
+    return {y1,y2};
+  });
+
+  return (
+    <svg className="absolute left-0 w-full h-full" style={{top:0,left:0,zIndex:8,pointerEvents:"none"}}
+      viewBox="0 0 1000 1000" preserveAspectRatio="none">
+      {/* 手前側道路面 */}
+      <polygon points={pts(frontL)} fill="#484848"/>
+      {/* 奥側道路面 */}
+      <polygon points={pts(backL)} fill="#484848"/>
+      {/* 手前側センターライン */}
+      {frontLines.map((l,i)=>(
+        <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2}
+          stroke="#fff" strokeWidth="3" strokeLinecap="round"/>
+      ))}
+      {/* 奥側センターライン */}
+      {backLines.map((l,i)=>(
+        <line key={i} x1={cx} y1={l.y1} x2={cx} y2={l.y2}
+          stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
+      ))}
+      {/* 手前側路肩線（左） */}
+      <line x1={cx-wBottom/2} y1={yBottom} x2={cx-wRail/2} y2={yRail}
+        stroke="#fff" strokeWidth="2.5" opacity="0.7"/>
+      {/* 手前側路肩線（右） */}
+      <line x1={cx+wBottom/2} y1={yBottom} x2={cx+wRail/2} y2={yRail}
+        stroke="#fff" strokeWidth="2.5" opacity="0.7"/>
+      {/* 奥側路肩線（左） */}
+      <line x1={cx-wRail/2} y1={yRail} x2={cx-wFar/2} y2={yFar}
+        stroke="#fff" strokeWidth="2" opacity="0.6"/>
+      {/* 奥側路肩線（右） */}
+      <line x1={cx+wRail/2} y1={yRail} x2={cx+wFar/2} y2={yFar}
+        stroke="#fff" strokeWidth="2" opacity="0.6"/>
     </svg>
   );
 }
