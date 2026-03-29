@@ -68,6 +68,7 @@ function playBell(ctx: AudioContext, t: number) {
 }
 
 function createRumble(ctx: AudioContext, type: TrainType): {stop:()=>void} {
+  // ── ベースノイズ（低音ゴロゴロ） ──
   const len = ctx.sampleRate*3;
   const buf = ctx.createBuffer(1,len,ctx.sampleRate);
   const d = buf.getChannelData(0);
@@ -86,8 +87,30 @@ function createRumble(ctx: AudioContext, type: TrainType): {stop:()=>void} {
   lfoG.connect(master.gain);
   src.connect(bpf); bpf.connect(lpf); lpf.connect(master); master.connect(ctx.destination);
   src.start(); lfo.start();
+
+  // ── ガタンゴトン衝撃音（レールの継ぎ目） ──
+  let chunkTimer: ReturnType<typeof setInterval>|null = null;
+  if(type !== "shinkansen") {
+    const intervalMs = type==="steam" ? 600 : type==="express" ? 280 : 380;
+    chunkTimer = setInterval(()=>{
+      const t = ctx.currentTime;
+      const impLen = Math.floor(ctx.sampleRate * 0.045);
+      const impBuf = ctx.createBuffer(1, impLen, ctx.sampleRate);
+      const impD = impBuf.getChannelData(0);
+      for(let i=0;i<impLen;i++) impD[i] = (Math.random()*2-1) * Math.exp(-i/(impLen*0.25));
+      const impSrc = ctx.createBufferSource(); impSrc.buffer = impBuf;
+      const impLpf = ctx.createBiquadFilter(); impLpf.type="lowpass"; impLpf.frequency.value=280;
+      const impG = ctx.createGain(); impG.gain.setValueAtTime(0.4,t); impG.gain.exponentialRampToValueAtTime(0.001,t+0.045);
+      impSrc.connect(impLpf); impLpf.connect(impG); impG.connect(ctx.destination);
+      impSrc.start(t); impSrc.stop(t+0.05);
+    }, intervalMs);
+  }
+
   setTimeout(()=>{ try{bpf.frequency.exponentialRampToValueAtTime(bpf.frequency.value*0.65,ctx.currentTime+0.9);}catch{/**/} },1600);
-  return {stop:()=>{try{src.stop();lfo.stop();}catch{/**/}}};
+  return {stop:()=>{
+    try{src.stop();lfo.stop();}catch{/**/}
+    if(chunkTimer) clearInterval(chunkTimer);
+  }};
 }
 
 function createSteamChuff(ctx: AudioContext): {stop:()=>void} {
@@ -278,20 +301,20 @@ export default function FumikiriApp() {
   const addCrosser = useCallback((type: CrosserType)=>{
     if(!isOpen) return;
     const def = CROSSER_DEFS.find(d=>d.type===type)!;
+    // 道路は画面中央(50%)±9.5%(190px/2 ÷ 画面幅1000px想定)
+    // 左端から来る or 右端から来る（道路の外側から登場）
     const fromLeft = Math.random()>0.5;
     const newC: Crosser = {
       id: ++crosserIdSeq,
-      type, 
+      type,
       emoji: fromLeft ? def.emoji : def.emojiLeft,
-      x: fromLeft ? -3 : 103,
+      x: fromLeft ? 40.5 : 59.5,   // 道路の左端 or 右端から出発
       dir: fromLeft ? 1 : -1,
       speed: def.speed,
       crashed: false,
     };
     setCrossers(prev=>[...prev,newC]);
-    if(isOpen){
-      setScore(s=>s+10);
-    }
+    setScore(s=>s+10);
   },[isOpen]);
 
   useEffect(()=>()=>{stopBell();stopTrainSnd();stopSmoke();},[stopBell,stopTrainSnd,stopSmoke]);
@@ -340,19 +363,13 @@ export default function FumikiriApp() {
         style={{bottom:0,width:190,height:"37%",background:"#484848"}}>
         <div className="absolute inset-0"
           style={{background:"repeating-linear-gradient(180deg,#484848 0,#484848 17px,#383838 17px,#383838 20px)"}}/>
+        {/* 白線：全て同じ高さ・幅に統一 */}
         {[0,1,2,3,4,5,6].map(i=>(
           <div key={i} className="absolute left-1/2 -translate-x-1/2"
-            style={{width:10,height:20,background:"#fff",top:`${4+i*14}%`,borderRadius:2}}/>
+            style={{width:10,height:24,background:"#fff",top:8+i*38,borderRadius:2}}/>
         ))}
         <div className="absolute left-2 top-0 bottom-0" style={{width:4,background:"#fff",opacity:0.55}}/>
         <div className="absolute right-2 top-0 bottom-0" style={{width:4,background:"#fff",opacity:0.55}}/>
-        
-        {/* 踏切内の道路（線路と交差する部分） */}
-        <div className="absolute left-0 w-full" 
-          style={{top:"calc(62% - 37%)",height:40,background:"#484848",zIndex:12}}>
-          <div className="absolute left-2 top-0 bottom-0" style={{width:4,background:"#fff",opacity:0.8}}/>
-          <div className="absolute right-2 top-0 bottom-0" style={{width:4,background:"#fff",opacity:0.8}}/>
-        </div>
       </div>
 
       {/* 縁石・歩道 */}
@@ -376,14 +393,15 @@ export default function FumikiriApp() {
       {/* 線路 */}
       <Rail/>
 
-      {/* 渡り者 */}
+      {/* 渡り者（踏切の道路上を通る） */}
       {crossers.map(c=>(
         <div key={c.id} className="absolute"
           style={{
             left:`${c.x}%`,
-            bottom:"calc(62% + 5px)", // 踏切道路の高さに調整
-            fontSize: c.type==="car"?28:22,
-            zIndex:15,
+            // 道路は bottom:0〜37%。歩道の上（bottom:37%+32px）ではなく道路面上
+            bottom:"calc(37% + 14px)",
+            fontSize: c.type==="car"?26:20,
+            zIndex:22,
             filter: c.crashed?"grayscale(1) brightness(0.4)":"none",
             transition:"filter 0.2s",
           }}>
