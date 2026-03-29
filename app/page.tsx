@@ -83,10 +83,11 @@ function createRumble(ctx: AudioContext, type: TrainType): {stop:()=>void} {
   const lfo=ctx.createOscillator(); const lfoG=ctx.createGain();
   lfo.type="square";
   lfo.frequency.value=type==="shinkansen"?13:type==="steam"?3.5:type==="express"?9:6;
-  lfoG.gain.value=type==="shinkansen"?0.035:0.075;
+  lfoG.gain.value=type==="shinkansen"?0.08:0.18;
   lfo.connect(lfoG);
   const master=ctx.createGain();
-  master.gain.value=type==="shinkansen"?0.065:type==="steam"?0.14:0.10;
+  // 音量を大幅アップ
+  master.gain.value=type==="shinkansen"?0.18:type==="steam"?0.38:0.28;
   lfoG.connect(master.gain);
   src.connect(bpf); bpf.connect(lpf); lpf.connect(master); master.connect(ctx.destination);
   src.start(); lfo.start();
@@ -97,15 +98,16 @@ function createRumble(ctx: AudioContext, type: TrainType): {stop:()=>void} {
     const intervalMs = type==="steam" ? 600 : type==="express" ? 280 : 380;
     chunkTimer = setInterval(()=>{
       const t = ctx.currentTime;
-      const impLen = Math.floor(ctx.sampleRate * 0.045);
+      const impLen = Math.floor(ctx.sampleRate * 0.055);
       const impBuf = ctx.createBuffer(1, impLen, ctx.sampleRate);
       const impD = impBuf.getChannelData(0);
       for(let i=0;i<impLen;i++) impD[i] = (Math.random()*2-1) * Math.exp(-i/(impLen*0.25));
       const impSrc = ctx.createBufferSource(); impSrc.buffer = impBuf;
-      const impLpf = ctx.createBiquadFilter(); impLpf.type="lowpass"; impLpf.frequency.value=280;
-      const impG = ctx.createGain(); impG.gain.setValueAtTime(0.4,t); impG.gain.exponentialRampToValueAtTime(0.001,t+0.045);
+      const impLpf = ctx.createBiquadFilter(); impLpf.type="lowpass"; impLpf.frequency.value=320;
+      // 衝撃音も大きく
+      const impG = ctx.createGain(); impG.gain.setValueAtTime(0.9,t); impG.gain.exponentialRampToValueAtTime(0.001,t+0.055);
       impSrc.connect(impLpf); impLpf.connect(impG); impG.connect(ctx.destination);
-      impSrc.start(t); impSrc.stop(t+0.05);
+      impSrc.start(t); impSrc.stop(t+0.06);
     }, intervalMs);
   }
 
@@ -217,14 +219,15 @@ export default function FumikiriApp() {
   },[]);
 
   // 電車通過中に踏切内にいる渡り者を検出
+  // 判定: 線路高さ(bottom 60〜64%)かつ道路内（画面中央の道路幅内）のみ
   useEffect(()=>{
     if(phase!=="passing") return;
     const id = setInterval(()=>{
       setCrossers(prev=>{
         let hit=false;
         const next = prev.map(c=>{
-          // 線路エリア: bottom 62%付近 ± 3% (yがvh%換算で59〜65あたり)
-          if(!c.crashed && c.y>57 && c.y<68){
+          // 線路は bottom:62% → y が 60〜64% の範囲が踏切内
+          if(!c.crashed && c.y>60 && c.y<64){
             hit=true;
             return {...c, crashed:true};
           }
@@ -236,7 +239,7 @@ export default function FumikiriApp() {
         }
         return next;
       });
-    },100);
+    },50);
     return ()=>clearInterval(id);
   },[phase]);
 
@@ -358,12 +361,16 @@ export default function FumikiriApp() {
         {[0,1,2,3,4].map(i=><line key={i} x1={252+i*24} y1="45" x2={252+i*24} y2="110" stroke="#5a4020" strokeWidth="1.5"/>)}
       </svg>
 
-      {/* 道路（手前側: bottom 0〜62%） */}
+      {/* 道路（手前側: bottom 0〜62%）— 45度後方視点 */}
       <div className="absolute left-1/2 -translate-x-1/2"
-        style={{bottom:0, width:ROAD_W, height:"62%", background:"#484848", zIndex:8}}>
+        style={{
+          bottom:0, width:ROAD_W, height:"62%",
+          background:"#484848", zIndex:8,
+          transformOrigin:"bottom center",
+          transform:"perspective(400px) rotateX(8deg)",
+        }}>
         <div className="absolute inset-0"
           style={{background:"repeating-linear-gradient(180deg,#484848 0,#484848 14px,#383838 14px,#383838 16px)"}}/>
-        {/* センターライン */}
         {Array.from({length:12}).map((_,i)=>(
           <div key={i} className="absolute left-1/2 -translate-x-1/2"
             style={{width:4,height:18,background:"#fff",bottom:8+i*42,borderRadius:2}}/>
@@ -372,9 +379,14 @@ export default function FumikiriApp() {
         <div className="absolute right-2 top-0 bottom-0" style={{width:3,background:"#fff",opacity:0.6}}/>
       </div>
 
-      {/* 道路（奥側: 線路より上 62%〜75%） */}
+      {/* 道路（奥側: 線路より上 62%〜75%）— 同じ視点 */}
       <div className="absolute left-1/2 -translate-x-1/2"
-        style={{bottom:"62%", width:ROAD_W, height:"13%", background:"#484848", zIndex:8}}>
+        style={{
+          bottom:"62%", width:ROAD_W, height:"13%",
+          background:"#484848", zIndex:8,
+          transformOrigin:"bottom center",
+          transform:"perspective(400px) rotateX(8deg)",
+        }}>
         <div className="absolute inset-0"
           style={{background:"repeating-linear-gradient(180deg,#484848 0,#484848 14px,#383838 14px,#383838 16px)"}}/>
         {Array.from({length:3}).map((_,i)=>(
@@ -583,92 +595,97 @@ function Building({x,w,h,color,roofColor,windows}:{x:string;w:number;h:number;co
 }
 
 // ─────────────────────────────────────────────
-// 渡り者SVG（俯瞰視点・進行方向対応）
+// 渡り者SVG（45度後方視点・進行方向対応）
+// dir=1: 奥へ向かう（上方向）= 背中が見える
+// dir=-1: 手前へ向かう（下方向）= 正面が見える
 // ─────────────────────────────────────────────
-// dir: 1=奥へ(上方向), -1=手前へ(下方向)
 function CrosserSVG({type, dir, roadW}:{type:CrosserType; dir:1|-1; roadW:number}){
-  // 車: 道路幅の45%、人: 15%、自転車: 20%
   const carW   = Math.round(roadW * 0.45);
   const personW= Math.round(roadW * 0.15);
   const bikeW  = Math.round(roadW * 0.20);
 
-  // 奥向き(dir=1)=上=rotate(0)、手前向き(dir=-1)=下=rotate(180)
-  const rot = dir === 1 ? 0 : 180;
-
   if(type === "car"){
-    const w=carW, h=Math.round(carW*1.8);
+    const w=carW, h=Math.round(carW*1.6);
+    // dir=1(奥向き): フロントが上、dir=-1(手前向き): フロントが下
+    const goingAway = dir===1;
     return(
-      <svg width={w} height={h} viewBox="0 0 40 72"
-        style={{transform:`rotate(${rot}deg)`,display:"block"}}>
-        {/* 車体 */}
-        <rect x="3" y="8" width="34" height="56" rx="6" fill="#e74c3c"/>
-        {/* ルーフ */}
-        <rect x="7" y="18" width="26" height="28" rx="4" fill="#c0392b"/>
+      <svg width={w} height={h} viewBox="0 0 44 70" style={{display:"block"}}>
+        {/* 車体下部（床面） */}
+        <rect x="2" y={goingAway?30:10} width="40" height="30" rx="4" fill="#c0392b"/>
+        {/* 車体上部（ルーフ・側面） */}
+        <rect x="6" y={goingAway?14:14} width="32" height="26" rx="4" fill="#e74c3c"/>
         {/* フロントガラス */}
-        <rect x="8" y="20" width="24" height="14" rx="2" fill="#aee6ff" opacity="0.85"/>
+        <rect x="7" y={goingAway?14:34} width="30" height="12" rx="2" fill="#aee6ff" opacity="0.9"/>
         {/* リアガラス */}
-        <rect x="8" y="36" width="24" height="10" rx="2" fill="#aee6ff" opacity="0.6"/>
-        {/* ヘッドライト（上=前） */}
-        <rect x="5"  y="8"  width="10" height="5" rx="2" fill="#fffaaa"/>
-        <rect x="25" y="8"  width="10" height="5" rx="2" fill="#fffaaa"/>
-        {/* テールライト（下=後） */}
-        <rect x="5"  y="59" width="10" height="5" rx="2" fill="#ff4444"/>
-        <rect x="25" y="59" width="10" height="5" rx="2" fill="#ff4444"/>
-        {/* タイヤ */}
-        <rect x="0"  y="12" width="6" height="12" rx="2" fill="#222"/>
-        <rect x="34" y="12" width="6" height="12" rx="2" fill="#222"/>
-        <rect x="0"  y="48" width="6" height="12" rx="2" fill="#222"/>
-        <rect x="34" y="48" width="6" height="12" rx="2" fill="#222"/>
+        <rect x="7" y={goingAway?34:14} width="30" height="10" rx="2" fill="#aee6ff" opacity="0.55"/>
+        {/* ヘッドライト */}
+        <rect x="4"  y={goingAway?8:56}  width="10" height="5" rx="2" fill="#fffaaa"/>
+        <rect x="30" y={goingAway?8:56}  width="10" height="5" rx="2" fill="#fffaaa"/>
+        {/* テールライト */}
+        <rect x="4"  y={goingAway?58:8}  width="10" height="5" rx="2" fill="#ff4444"/>
+        <rect x="30" y={goingAway?58:8}  width="10" height="5" rx="2" fill="#ff4444"/>
+        {/* タイヤ（左右） */}
+        <rect x="0"  y="14" width="5" height="14" rx="2" fill="#222"/>
+        <rect x="39" y="14" width="5" height="14" rx="2" fill="#222"/>
+        <rect x="0"  y="42" width="5" height="14" rx="2" fill="#222"/>
+        <rect x="39" y="42" width="5" height="14" rx="2" fill="#222"/>
+        {/* 側面ドア */}
+        <rect x="0"  y="26" width="5" height="16" rx="1" fill="#a93226"/>
+        <rect x="39" y="26" width="5" height="16" rx="1" fill="#a93226"/>
       </svg>
     );
   }
 
   if(type === "bike"){
-    const w=bikeW, h=Math.round(bikeW*2.2);
+    const w=bikeW, h=Math.round(bikeW*2.8);
+    const goingAway = dir===1;
+    const skinColor="#f5a623"; const bodyColor="#27ae60";
     return(
-      <svg width={w} height={h} viewBox="0 0 20 44"
-        style={{transform:`rotate(${rot}deg)`,display:"block"}}>
-        {/* フレーム */}
-        <line x1="10" y1="8" x2="10" y2="36" stroke="#555" strokeWidth="2"/>
-        <line x1="4"  y1="20" x2="16" y2="20" stroke="#555" strokeWidth="2"/>
-        {/* 前輪（上） */}
-        <circle cx="10" cy="8"  r="6" fill="none" stroke="#333" strokeWidth="2.5"/>
-        <circle cx="10" cy="8"  r="2" fill="#555"/>
-        {/* 後輪（下） */}
-        <circle cx="10" cy="36" r="6" fill="none" stroke="#333" strokeWidth="2.5"/>
-        <circle cx="10" cy="36" r="2" fill="#555"/>
+      <svg width={w} height={h} viewBox="0 0 22 56" style={{display:"block"}}>
+        {/* 自転車フレーム（側面） */}
+        <ellipse cx="11" cy={goingAway?44:12} rx="8" ry="8" fill="none" stroke="#333" strokeWidth="2.5"/>
+        <ellipse cx="11" cy={goingAway?12:44} rx="8" ry="8" fill="none" stroke="#333" strokeWidth="2.5"/>
+        <line x1="11" y1="12" x2="11" y2="44" stroke="#555" strokeWidth="2"/>
+        <line x1="5"  y1="28" x2="17" y2="28" stroke="#555" strokeWidth="2"/>
+        {/* 乗り手 */}
+        <circle cx="11" cy={goingAway?20:36} r="4" fill={skinColor}/>
+        <rect x="8" y={goingAway?24:28} width="6" height="8" rx="1" fill={bodyColor}/>
         {/* ハンドル */}
-        <line x1="6" y1="12" x2="14" y2="12" stroke="#444" strokeWidth="2"/>
-        {/* サドル */}
-        <line x1="6" y1="24" x2="14" y2="24" stroke="#444" strokeWidth="2"/>
-        {/* 人（乗り手） */}
-        <circle cx="10" cy="18" r="3" fill="#f5a623"/>
-        <rect x="8" y="21" width="4" height="5" rx="1" fill="#3498db"/>
+        <line x1="6" y1={goingAway?16:40} x2="16" y2={goingAway?16:40} stroke="#444" strokeWidth="2"/>
       </svg>
     );
   }
 
-  // person / child
-  const w=personW, h=Math.round(personW*3.2);
+  // person / child — 45度後方視点の人体
+  const w=personW, h=Math.round(personW*4.0);
   const isChild = type==="child";
   const skinColor = isChild ? "#f5c6a0" : "#f5a623";
   const bodyColor = isChild ? "#e74c3c" : "#3498db";
+  const goingAway = dir===1;
+  // 奥向き=背中、手前向き=正面
   return(
-    <svg width={w} height={h} viewBox="0 0 16 52"
-      style={{transform:`rotate(${rot}deg)`,display:"block"}}>
+    <svg width={w} height={h} viewBox="0 0 18 72" style={{display:"block"}}>
       {/* 頭 */}
-      <circle cx="8" cy="6" r="5" fill={skinColor}/>
-      {/* 体 */}
-      <rect x="4" y="11" width="8" height="16" rx="2" fill={bodyColor}/>
-      {/* 腕（前に向かって伸びる） */}
-      <line x1="4"  y1="14" x2="0"  y2="22" stroke={bodyColor} strokeWidth="2.5" strokeLinecap="round"/>
-      <line x1="12" y1="14" x2="16" y2="22" stroke={bodyColor} strokeWidth="2.5" strokeLinecap="round"/>
+      <circle cx="9" cy="7" r="6" fill={skinColor}/>
+      {/* 首 */}
+      <rect x="7" y="12" width="4" height="4" fill={skinColor}/>
+      {/* 体（胴体） */}
+      <rect x="4" y="16" width="10" height="18" rx="2" fill={bodyColor}/>
+      {/* 腕（歩行で前後に振る） */}
+      <line x1="4"  y1="18" x2={goingAway?1:0}  y2="32" stroke={bodyColor} strokeWidth="3" strokeLinecap="round"/>
+      <line x1="14" y1="18" x2={goingAway?17:18} y2="32" stroke={bodyColor} strokeWidth="3" strokeLinecap="round"/>
       {/* 脚（歩行ポーズ） */}
-      <line x1="6"  y1="27" x2="3"  y2="42" stroke={skinColor} strokeWidth="2.5" strokeLinecap="round"/>
-      <line x1="10" y1="27" x2="13" y2="42" stroke={skinColor} strokeWidth="2.5" strokeLinecap="round"/>
+      <line x1="7"  y1="34" x2={goingAway?5:4}  y2="52" stroke={skinColor} strokeWidth="3" strokeLinecap="round"/>
+      <line x1="11" y1="34" x2={goingAway?13:14} y2="52" stroke={skinColor} strokeWidth="3" strokeLinecap="round"/>
       {/* 靴 */}
-      <ellipse cx="3"  cy="43" rx="3" ry="2" fill="#333"/>
-      <ellipse cx="13" cy="43" rx="3" ry="2" fill="#333"/>
+      <ellipse cx={goingAway?5:4}  cy="53" rx="4" ry="2.5" fill="#333"/>
+      <ellipse cx={goingAway?13:14} cy="53" rx="4" ry="2.5" fill="#333"/>
+      {/* 正面向きの場合は顔を描く */}
+      {!goingAway && <>
+        <circle cx="6" cy="7" r="1.2" fill="#333"/>
+        <circle cx="12" cy="7" r="1.2" fill="#333"/>
+        <path d="M6,10 Q9,12 12,10" stroke="#333" strokeWidth="1" fill="none"/>
+      </>}
     </svg>
   );
 }
