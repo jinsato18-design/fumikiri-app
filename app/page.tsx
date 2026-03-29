@@ -1,0 +1,971 @@
+"use client";
+
+import { useState, useEffect, useRef, useCallback } from "react";
+
+// ─────────────────────────────────────────────
+// 型
+// ─────────────────────────────────────────────
+type Phase = "idle" | "warning" | "closed" | "passing" | "opening" | "done";
+type TrainType = "local" | "express" | "shinkansen" | "steam";
+type CrosserType = "person" | "child" | "car" | "bike";
+
+interface Crosser {
+  id: number;
+  type: CrosserType;
+  x: number;       // 0〜100 vw
+  dir: 1 | -1;     // 1=右→左, -1=左→右
+  speed: number;
+  emoji: string;
+  crashed: boolean;
+}
+
+interface TrainDef {
+  id: TrainType; label: string; emoji: string; speed: number;
+  color1: string; color2: string; accent: string;
+}
+
+const TRAINS: TrainDef[] = [
+  { id:"local",      label:"ふつうでんしゃ", emoji:"🚃", speed:3.5, color1:"#1a6fc4", color2:"#0d3d73", accent:"#c8e8ff" },
+  { id:"express",    label:"とっきゅう",     emoji:"🚄", speed:2.2, color1:"#c0392b", color2:"#7b241c", accent:"#ffd6d6" },
+  { id:"shinkansen", label:"しんかんせん",   emoji:"🚅", speed:1.4, color1:"#f0f0f0", color2:"#aaa",    accent:"#005bac" },
+  { id:"steam",      label:"きかんしゃ",     emoji:"🚂", speed:4.5, color1:"#2c2c2c", color2:"#111",    accent:"#cc4400" },
+];
+
+const CROSSER_DEFS: { type: CrosserType; emoji: string; emojiLeft: string; speed: number }[] = [
+  { type:"person", emoji:"🚶", emojiLeft:"🚶", speed:0.35 },
+  { type:"child",  emoji:"🧒", emojiLeft:"🧒", speed:0.28 },
+  { type:"car",    emoji:"🚗", emojiLeft:"🚙", speed:1.2  },
+  { type:"bike",   emoji:"🚲", emojiLeft:"🚲", speed:0.6  },
+];
+
+// ─────────────────────────────────────────────
+// Audio helpers
+// ─────────────────────────────────────────────
+function getCtx(r: React.RefObject<AudioContext | null>): AudioContext {
+  if (!r.current) (r as { current: AudioContext | null }).current = new AudioContext();
+  return r.current!;
+}
+
+function playBell(ctx: AudioContext, t: number) {
+  // アタックノイズ
+  const ab = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.012), ctx.sampleRate);
+  const ad = ab.getChannelData(0);
+  for (let i = 0; i < ad.length; i++) ad[i] = (Math.random()*2-1)*(1-i/ad.length);
+  const as_ = ctx.createBufferSource(); as_.buffer = ab;
+  const ahpf = ctx.createBiquadFilter(); ahpf.type="highpass"; ahpf.frequency.value=3500;
+  const ag = ctx.createGain(); ag.gain.setValueAtTime(0.7,t); ag.gain.exponentialRampToValueAtTime(0.001,t+0.012);
+  as_.connect(ahpf); ahpf.connect(ag); ag.connect(ctx.destination);
+  as_.start(t); as_.stop(t+0.015);
+  // 倍音余韻
+  [{f:1480,a:0.32,d:0.6},{f:2960,a:0.14,d:0.32},{f:4440,a:0.07,d:0.18},{f:5920,a:0.04,d:0.10}]
+    .forEach(({f,a,d})=>{
+      const o=ctx.createOscillator(), g=ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type="sine"; o.frequency.value=f;
+      g.gain.setValueAtTime(a,t+0.002); g.gain.exponentialRampToValueAtTime(0.0001,t+d);
+      o.start(t); o.stop(t+d+0.01);
+    });
+}
+
+function createRumble(ctx: AudioContext, type: TrainType): {stop:()=>void} {
+  const len = ctx.sampleRate*3;
+  const buf = ctx.createBuffer(1,len,ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
+  const src=ctx.createBufferSource(); src.buffer=buf; src.loop=true;
+  const bpf=ctx.createBiquadFilter(); bpf.type="bandpass";
+  bpf.frequency.value=type==="shinkansen"?160:type==="steam"?100:190; bpf.Q.value=0.7;
+  const lpf=ctx.createBiquadFilter(); lpf.type="lowpass"; lpf.frequency.value=type==="shinkansen"?350:550;
+  const lfo=ctx.createOscillator(); const lfoG=ctx.createGain();
+  lfo.type="square";
+  lfo.frequency.value=type==="shinkansen"?13:type==="steam"?3.5:type==="express"?9:6;
+  lfoG.gain.value=type==="shinkansen"?0.035:0.075;
+  lfo.connect(lfoG);
+  const master=ctx.createGain();
+  master.gain.value=type==="shinkansen"?0.065:type==="steam"?0.14:0.10;
+  lfoG.connect(master.gain);
+  src.connect(bpf); bpf.connect(lpf); lpf.connect(master); master.connect(ctx.destination);
+  src.start(); lfo.start();
+  setTimeout(()=>{ try{bpf.frequency.exponentialRampToValueAtTime(bpf.frequency.value*0.65,ctx.currentTime+0.9);}catch{/**/} },1600);
+  return {stop:()=>{try{src.stop();lfo.stop();}catch{/**/}}};
+}
+
+function createSteamChuff(ctx: AudioContext): {stop:()=>void} {
+  let on=true;
+  const tick=()=>{
+    if(!on) return;
+    const t=ctx.currentTime;
+    const bl=Math.floor(ctx.sampleRate*0.16);
+    const b=ctx.createBuffer(1,bl,ctx.sampleRate);
+    const bd=b.getChannelData(0);
+    for(let i=0;i<bl;i++) bd[i]=Math.random()*2-1;
+    const s=ctx.createBufferSource(); s.buffer=b;
+    const hpf=ctx.createBiquadFilter(); hpf.type="highpass"; hpf.frequency.value=700;
+    const lpf=ctx.createBiquadFilter(); lpf.type="lowpass"; lpf.frequency.value=2800;
+    const g=ctx.createGain();
+    g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.28,t+0.04);
+    g.gain.exponentialRampToValueAtTime(0.001,t+0.16);
+    s.connect(hpf); hpf.connect(lpf); lpf.connect(g); g.connect(ctx.destination);
+    s.start(t); s.stop(t+0.18);
+    setTimeout(tick,440);
+  };
+  tick();
+  return {stop:()=>{on=false;}};
+}
+
+function playHorn(ctx: AudioContext, type: TrainType) {
+  const t=ctx.currentTime;
+  if(type==="steam"){
+    [262,330,392].forEach((f,i)=>{
+      const o=ctx.createOscillator(), vib=ctx.createOscillator(), vg=ctx.createGain(), g=ctx.createGain();
+      vib.frequency.value=5; vg.gain.value=5;
+      vib.connect(vg); vg.connect(o.frequency);
+      o.connect(g); g.connect(ctx.destination);
+      o.type="sawtooth"; o.frequency.value=f;
+      g.gain.setValueAtTime(0,t+i*0.03); g.gain.linearRampToValueAtTime(0.17,t+i*0.03+0.08);
+      g.gain.setValueAtTime(0.17,t+1.0); g.gain.exponentialRampToValueAtTime(0.001,t+1.4);
+      o.start(t); o.stop(t+1.5); vib.start(t); vib.stop(t+1.5);
+    });
+  } else if(type==="shinkansen"){
+    [622,830].forEach(f=>{
+      const o=ctx.createOscillator(), g=ctx.createGain();
+      o.connect(g); g.connect(ctx.destination); o.type="sine"; o.frequency.value=f;
+      g.gain.setValueAtTime(0.2,t); g.gain.setValueAtTime(0.2,t+0.3); g.gain.exponentialRampToValueAtTime(0.001,t+0.5);
+      o.start(t); o.stop(t+0.6);
+    });
+  } else if(type==="express"){
+    [440,554].forEach((f,i)=>{
+      const o=ctx.createOscillator(), g=ctx.createGain();
+      o.connect(g); g.connect(ctx.destination); o.type="sawtooth"; o.frequency.value=f;
+      g.gain.setValueAtTime(0,t+i*0.05); g.gain.linearRampToValueAtTime(0.14,t+i*0.05+0.05);
+      g.gain.setValueAtTime(0.14,t+0.55); g.gain.exponentialRampToValueAtTime(0.001,t+0.85);
+      o.start(t); o.stop(t+0.9);
+    });
+  } else {
+    const o=ctx.createOscillator(), g=ctx.createGain();
+    o.connect(g); g.connect(ctx.destination); o.type="sawtooth"; o.frequency.value=392;
+    g.gain.setValueAtTime(0.14,t); g.gain.setValueAtTime(0.14,t+0.4); g.gain.exponentialRampToValueAtTime(0.001,t+0.65);
+    o.start(t); o.stop(t+0.7);
+  }
+}
+
+// ─────────────────────────────────────────────
+// メインコンポーネント
+// ─────────────────────────────────────────────
+let crosserIdSeq = 0;
+
+export default function FumikiriApp() {
+  const [phase, setPhase]               = useState<Phase>("idle");
+  const [barrierAngle, setBarrierAngle] = useState(-85); // -85=上向き, 0=水平
+  const [trainVisible, setTrainVisible] = useState(false);
+  const [trainCount, setTrainCount]     = useState(0);
+  const [selectedTrain, setSelectedTrain] = useState<TrainType>("local");
+  const [crossers, setCrossers]         = useState<Crosser[]>([]);
+  const [score, setScore]               = useState(0);
+  const [danger, setDanger]             = useState(false); // 危険フラッシュ
+  const [smokeFrames, setSmokeFrames]   = useState(0);     // 煙アニメ用
+
+  const audioCtxRef  = useRef<AudioContext | null>(null);
+  const bellRef      = useRef<ReturnType<typeof setInterval>|null>(null);
+  const trainSndRef  = useRef<{stop:()=>void}|null>(null);
+  const crosserTimer = useRef<ReturnType<typeof setInterval>|null>(null);
+  const smokeTimer   = useRef<ReturnType<typeof setInterval>|null>(null);
+
+  const trainDef = TRAINS.find(t=>t.id===selectedTrain)!;
+  const isWarning = ["warning","closed","passing"].includes(phase);
+  const canPress  = phase==="idle" || phase==="done";
+  const isOpen    = phase==="idle" || phase==="done" || phase==="opening";
+
+  // 渡れる人・車を動かす
+  useEffect(()=>{
+    const id = setInterval(()=>{
+      setCrossers(prev=>{
+        const next = prev.map(c=>{
+          if(c.crashed) return c;
+          const nx = c.x + c.dir * c.speed;
+          return {...c, x: nx};
+        }).filter(c=>c.x>-5 && c.x<110);
+        return next;
+      });
+    }, 50);
+    return ()=>clearInterval(id);
+  },[]);
+
+  // 電車通過中に踏切内にいる渡り者を検出
+  useEffect(()=>{
+    if(phase!=="passing") return;
+    const id = setInterval(()=>{
+      setCrossers(prev=>{
+        let hit=false;
+        const next = prev.map(c=>{
+          // 踏切エリア: 画面中央±12%
+          if(!c.crashed && c.x>38 && c.x<62){
+            hit=true;
+            return {...c, crashed:true};
+          }
+          return c;
+        });
+        if(hit){
+          setDanger(true);
+          setTimeout(()=>setDanger(false),800);
+        }
+        return next;
+      });
+    },100);
+    return ()=>clearInterval(id);
+  },[phase]);
+
+  const stopBell = useCallback(()=>{
+    if(bellRef.current){clearInterval(bellRef.current);bellRef.current=null;}
+  },[]);
+  const stopTrainSnd = useCallback(()=>{
+    trainSndRef.current?.stop(); trainSndRef.current=null;
+  },[]);
+
+  const startBell = useCallback(()=>{
+    const ctx=getCtx(audioCtxRef);
+    playBell(ctx,ctx.currentTime);
+    playBell(ctx,ctx.currentTime+0.40);
+    bellRef.current=setInterval(()=>{
+      const t=ctx.currentTime;
+      playBell(ctx,t); playBell(ctx,t+0.40);
+    },800);
+  },[]);
+
+  // 煙アニメ（蒸気機関車通過中）
+  const startSmoke = useCallback(()=>{
+    smokeTimer.current=setInterval(()=>setSmokeFrames(f=>(f+1)%60),80);
+  },[]);
+  const stopSmoke = useCallback(()=>{
+    if(smokeTimer.current){clearInterval(smokeTimer.current);smokeTimer.current=null;}
+    setSmokeFrames(0);
+  },[]);
+
+  const startSequence = useCallback(()=>{
+    if(!canPress) return;
+    setTrainCount(c=>c+1);
+    setPhase("warning");
+    startBell();
+
+    setTimeout(()=>{
+      setBarrierAngle(0);
+      setPhase("closed");
+
+      setTimeout(()=>{
+        const ctx=getCtx(audioCtxRef);
+        playHorn(ctx,trainDef.id);
+        trainSndRef.current = trainDef.id==="steam"
+          ? createSteamChuff(ctx) : createRumble(ctx,trainDef.id);
+        if(trainDef.id==="steam") startSmoke();
+        setTrainVisible(true);
+        setPhase("passing");
+
+        setTimeout(()=>{
+          setTrainVisible(false);
+          stopBell(); stopTrainSnd(); stopSmoke();
+          setBarrierAngle(-85);
+          setPhase("opening");
+          setTimeout(()=>{
+            setPhase("done");
+            setTimeout(()=>setPhase("idle"),1200);
+          },1600);
+        }, trainDef.speed*1000+500);
+      },1000);
+    },1600);
+  },[canPress,startBell,stopBell,stopTrainSnd,trainDef,startSmoke,stopSmoke]);
+
+  // 渡り者を追加
+  const addCrosser = useCallback((type: CrosserType)=>{
+    if(!isOpen) return;
+    const def = CROSSER_DEFS.find(d=>d.type===type)!;
+    const fromLeft = Math.random()>0.5;
+    const newC: Crosser = {
+      id: ++crosserIdSeq,
+      type, 
+      emoji: fromLeft ? def.emoji : def.emojiLeft,
+      x: fromLeft ? -3 : 103,
+      dir: fromLeft ? 1 : -1,
+      speed: def.speed,
+      crashed: false,
+    };
+    setCrossers(prev=>[...prev,newC]);
+    if(isOpen){
+      setScore(s=>s+10);
+    }
+  },[isOpen]);
+
+  useEffect(()=>()=>{stopBell();stopTrainSnd();stopSmoke();},[stopBell,stopTrainSnd,stopSmoke]);
+
+  return (
+    <div className="relative w-screen h-screen overflow-hidden select-none"
+      style={{background: danger?"#ff000033":"transparent"}}>
+
+      {/* 空 */}
+      <div className="absolute inset-0"
+        style={{background:"linear-gradient(180deg,#3a8fc8 0%,#6ab8d8 40%,#a8d8ee 100%)"}}/>
+
+      {/* 雲 */}
+      <Cloud cls="cloud1" top={25} size={110}/>
+      <Cloud cls="cloud2" top={60} size={70}/>
+      <Cloud cls="cloud3" top={12} size={140}/>
+      <Cloud cls="cloud4" top={45} size={55}/>
+
+      {/* 山 */}
+      <svg className="absolute left-0 w-full" style={{bottom:"37%",pointerEvents:"none"}}
+        viewBox="0 0 1200 180" preserveAspectRatio="none">
+        <polygon points="0,180 80,70 200,120 340,25 490,100 640,35 790,105 940,20 1080,75 1200,45 1200,180" fill="#5a9a68" opacity="0.55"/>
+        <polygon points="0,180 60,90 170,130 310,45 460,110 610,50 760,115 910,30 1060,85 1200,55 1200,180" fill="#3d7a4a"/>
+        <polygon points="340,25 318,62 362,62" fill="white" opacity="0.85"/>
+        <polygon points="940,20 918,58 962,58" fill="white" opacity="0.85"/>
+      </svg>
+
+      {/* 地面 */}
+      <div className="absolute left-0 w-full"
+        style={{bottom:0,height:"37%",background:"linear-gradient(180deg,#5a9e3a 0%,#3d7a28 45%,#2d5e1e 100%)"}}/>
+
+      {/* 田んぼ・畑 */}
+      <svg className="absolute left-0 w-full" style={{bottom:0,height:"37%",pointerEvents:"none"}}
+        viewBox="0 0 1200 230" preserveAspectRatio="none">
+        <rect x="15" y="25" width="190" height="85" rx="3" fill="#4a8c30" stroke="#3a7020" strokeWidth="2"/>
+        {[0,1,2,3].map(i=><line key={i} x1={15+i*48} y1="25" x2={15+i*48} y2="110" stroke="#3a7020" strokeWidth="1.5"/>)}
+        {[0,1].map(i=><line key={i} x1="15" y1={25+i*42} x2="205" y2={25+i*42} stroke="#3a7020" strokeWidth="1.5"/>)}
+        <rect x="1000" y="18" width="175" height="92" rx="3" fill="#4a8c30" stroke="#3a7020" strokeWidth="2"/>
+        {[0,1,2,3].map(i=><line key={i} x1={1000+i*44} y1="18" x2={1000+i*44} y2="110" stroke="#3a7020" strokeWidth="1.5"/>)}
+        <rect x="240" y="45" width="130" height="65" rx="2" fill="#7a6030" stroke="#5a4020" strokeWidth="2"/>
+        {[0,1,2,3,4].map(i=><line key={i} x1={252+i*24} y1="45" x2={252+i*24} y2="110" stroke="#5a4020" strokeWidth="1.5"/>)}
+      </svg>
+
+      {/* 道路 */}
+      <div className="absolute left-1/2 -translate-x-1/2"
+        style={{bottom:0,width:190,height:"37%",background:"#484848"}}>
+        <div className="absolute inset-0"
+          style={{background:"repeating-linear-gradient(180deg,#484848 0,#484848 17px,#383838 17px,#383838 20px)"}}/>
+        {[0,1,2,3,4,5,6].map(i=>(
+          <div key={i} className="absolute left-1/2 -translate-x-1/2"
+            style={{width:10,height:20,background:"#fff",top:`${4+i*14}%`,borderRadius:2}}/>
+        ))}
+        <div className="absolute left-2 top-0 bottom-0" style={{width:4,background:"#fff",opacity:0.55}}/>
+        <div className="absolute right-2 top-0 bottom-0" style={{width:4,background:"#fff",opacity:0.55}}/>
+        
+        {/* 踏切内の道路（線路と交差する部分） */}
+        <div className="absolute left-0 w-full" 
+          style={{top:"calc(62% - 37%)",height:40,background:"#484848",zIndex:12}}>
+          {/* 踏切道路の白線 */}
+          <div className="absolute left-2 top-0 bottom-0" style={{width:4,background:"#fff",opacity:0.8}}/>
+          <div className="absolute right-2 top-0 bottom-0" style={{width:4,background:"#fff",opacity:0.8}}/>
+          {/* 踏切マーク */}
+          <div className="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2"
+            style={{width:30,height:30,background:"#fff",borderRadius:"50%",
+              display:"flex",alignItems:"center",justifyContent:"center",
+              fontSize:12,fontWeight:"bold",color:"#e8001a"}}>
+            踏切
+          </div>
+        </div>
+      </div>
+
+      {/* 縁石・歩道 */}
+      <div className="absolute left-0 w-full" style={{bottom:"37%",height:10,background:"#999",zIndex:5}}/>
+      <div className="absolute left-0 w-full" style={{bottom:"calc(37% + 10px)",height:22,
+        background:"repeating-linear-gradient(90deg,#d0d0d0 0,#d0d0d0 38px,#b8b8b8 38px,#b8b8b8 76px)",zIndex:5}}/>
+
+      {/* 電柱 */}
+      <ElectricPole x="13%"/>
+      <ElectricPole x="74%"/>
+
+      {/* 建物（住宅街） */}
+      <Building x="2%"  w={70} h={90}  color="#e8d8c8" roofColor="#b85c3e" windows={4}/>
+      <Building x="8%"  w={55} h={75}  color="#d8c8b8" roofColor="#a04c2e" windows={3}/>
+      <Building x="14%" w={48} h={65}  color="#c8b8a8" roofColor="#904c2e" windows={2}/>
+      <Building x="75%" w={60} h={80}  color="#d8c8b8" roofColor="#a04c2e" windows={3}/>
+      <Building x="82%" w={52} h={70}  color="#c8b8a8" roofColor="#904c2e" windows={2}/>
+      <Building x="88%" w={45} h={95}  color="#e8d8c8" roofColor="#b85c3e" windows={4}/>
+      <Building x="94%" w={38} h={60}  color="#d0c0b0" roofColor="#985c3e" windows={2}/>
+
+      {/* 線路 */}
+      <Rail/>
+
+      {/* 渡り者 */}
+      {crossers.map(c=>(
+        <div key={c.id} className="absolute"
+          style={{
+            left:`${c.x}%`,
+            bottom:"calc(62% + 5px)", // 踏切道路の高さに調整
+            fontSize: c.type==="car"?28:22,
+            zIndex:15,
+            filter: c.crashed?"grayscale(1) brightness(0.4)":"none",
+            transition:"filter 0.2s",
+          }}>
+          {c.crashed?"💥":c.emoji}
+        </div>
+      ))}
+
+      {/* 電車 */}
+      {trainVisible && <TrainSVG def={trainDef} smokeFrame={smokeFrames}/>}
+
+      {/* 踏切 */}
+      <FumikiriStructure barrierAngle={barrierAngle} isWarning={isWarning}/>
+
+      {/* ===== UI ===== */}
+
+      {/* 電車選択 */}
+      <div className="absolute top-16 left-1/2 -translate-x-1/2 flex gap-2 flex-wrap justify-center px-4" style={{zIndex:50}}>
+        {TRAINS.map(t=>(
+          <button key={t.id} onClick={()=>canPress&&setSelectedTrain(t.id)}
+            className="flex flex-col items-center px-3 py-1.5 rounded-xl font-bold transition-all"
+            style={{
+              background:selectedTrain===t.id?"#fff":"rgba(255,255,255,0.45)",
+              border:selectedTrain===t.id?"3px solid #e74c3c":"3px solid transparent",
+              color:"#333", transform:selectedTrain===t.id?"scale(1.1)":"scale(1)",
+              cursor:canPress?"pointer":"default", opacity:canPress?1:0.65,
+              boxShadow:selectedTrain===t.id?"0 4px 12px rgba(0,0,0,0.25)":"none",
+            }}>
+            <span style={{fontSize:26}}>{t.emoji}</span>
+            <span style={{fontSize:10}}>{t.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* 渡らせるボタン */}
+      <div className="absolute left-4 top-1/2 -translate-y-1/2 flex flex-col gap-2" style={{zIndex:50}}>
+        <div className="text-white text-xs font-bold mb-1 text-center"
+          style={{textShadow:"1px 1px 2px #000"}}>わたらせる</div>
+        {CROSSER_DEFS.map(d=>(
+          <button key={d.type} onClick={()=>addCrosser(d.type)}
+            className="rounded-xl px-3 py-2 font-bold text-lg transition-all"
+            style={{
+              background:isOpen?"rgba(255,255,255,0.85)":"rgba(180,180,180,0.5)",
+              cursor:isOpen?"pointer":"not-allowed",
+              border:isOpen?"2px solid #27ae60":"2px solid #aaa",
+              boxShadow:isOpen?"0 3px 8px rgba(0,0,0,0.2)":"none",
+            }}>
+            {d.emoji}
+          </button>
+        ))}
+      </div>
+
+      {/* スコア */}
+      <div className="absolute top-4 right-4 text-white font-bold text-lg"
+        style={{textShadow:"1px 1px 3px #000",zIndex:50}}>
+        ⭐ {score}てん
+      </div>
+
+      {/* 電車呼ぶボタン */}
+      <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2" style={{zIndex:50}}>
+        <button onClick={startSequence} disabled={!canPress}
+          className="px-8 py-3 rounded-full text-white text-xl font-bold shadow-lg transition-all"
+          style={{
+            background:canPress?"linear-gradient(135deg,#e74c3c,#c0392b)":"#999",
+            cursor:canPress?"pointer":"not-allowed",
+            boxShadow:canPress?"0 6px 20px rgba(231,76,60,0.5)":"none",
+          }}>
+          {trainDef.emoji} でんしゃを よぼう！
+        </button>
+        {trainCount>0&&(
+          <div className="text-white text-sm font-bold" style={{textShadow:"1px 1px 3px #000"}}>
+            でんしゃ {trainCount}かい とおったよ！
+          </div>
+        )}
+      </div>
+
+      {/* フェーズ表示 */}
+      <PhaseLabel phase={phase}/>
+
+      {/* 危険フラッシュ */}
+      {danger&&(
+        <div className="absolute inset-0 pointer-events-none"
+          style={{background:"rgba(255,0,0,0.25)",zIndex:100}}/>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// 背景パーツ
+// ─────────────────────────────────────────────
+function Cloud({cls,top,size}:{cls:string;top:number;size:number}){
+  return(
+    <div className={`absolute ${cls}`} style={{top,left:-size*2}}>
+      <div className="relative" style={{width:size*1.7,height:size*0.65}}>
+        <div className="absolute rounded-full" style={{width:size*0.95,height:size*0.52,bottom:0,left:size*0.08,background:"rgba(255,255,255,0.96)"}}/>
+        <div className="absolute rounded-full" style={{width:size*0.72,height:size*0.58,bottom:0,left:size*0.52,background:"rgba(255,255,255,0.96)"}}/>
+        <div className="absolute rounded-full" style={{width:size*0.68,height:size*0.65,bottom:0,left:size*0.28,background:"white"}}/>
+        <div className="absolute rounded-full" style={{width:size*0.52,height:size*0.42,bottom:0,left:size*0.95,background:"rgba(255,255,255,0.9)"}}/>
+      </div>
+    </div>
+  );
+}
+
+function ElectricPole({x}:{x:string}){
+  return(
+    <div className="absolute" style={{left:x,bottom:"calc(37% + 32px)",zIndex:6}}>
+      <svg width="44" height="130" viewBox="0 0 44 130">
+        <rect x="20" y="0" width="4" height="130" fill="#8B7355"/>
+        <rect x="4" y="18" width="36" height="5" rx="1" fill="#6B5A3E"/>
+        <rect x="9" y="34" width="26" height="4" rx="1" fill="#6B5A3E"/>
+        {[6,14,22,30].map(px=>(
+          <ellipse key={px} cx={px} cy="20" rx="3.5" ry="5" fill="#e0e0e0" stroke="#aaa" strokeWidth="0.5"/>
+        ))}
+        <path d="M6,20 Q22,27 38,20" stroke="#444" strokeWidth="1.2" fill="none"/>
+        <path d="M11,36 Q22,42 33,36" stroke="#444" strokeWidth="1.2" fill="none"/>
+      </svg>
+    </div>
+  );
+}
+
+function Building({x,w,h,color,roofColor,windows}:{x:string;w:number;h:number;color:string;roofColor:string;windows:number}){
+  return(
+    <div className="absolute" style={{left:x,bottom:"calc(37% + 32px)",zIndex:4}}>
+      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+        {/* 建物本体 */}
+        <rect x="0" y="0" width={w} height={h} fill={color} stroke="#777" strokeWidth="1"/>
+        {/* 屋根 */}
+        <polygon points={`0,0 ${w/2},${-h*0.25} ${w},0`} fill={roofColor}/>
+        <polygon points={`0,0 ${w/2},${-h*0.25} ${w},0`} fill="none" stroke="#555" strokeWidth="1"/>
+        {/* 屋根瓦テクスチャ */}
+        {Array.from({length:Math.floor(h*0.25/4)}).map((_,i)=>(
+          <line key={i} x1="0" y1={-i*4} x2={w} y2={-i*4} stroke="#555" strokeWidth="0.5" opacity="0.3"/>
+        ))}
+        {/* 窓 */}
+        {Array.from({length:Math.min(windows,Math.floor(h/25))}).map((_,row)=>
+          Array.from({length:Math.min(3,Math.floor(w/20))}).map((_,col)=>{
+            const wx=8+col*(w/3.5), wy=12+row*22;
+            if(wx+12>w-8) return null;
+            return(
+              <g key={`${row}-${col}`}>
+                <rect x={wx} y={wy} width="12" height="14" rx="1" fill="#e8f4ff" stroke="#666" strokeWidth="0.8"/>
+                <line x1={wx+6} y1={wy} x2={wx+6} y2={wy+14} stroke="#666" strokeWidth="0.5"/>
+                <line x1={wx} y1={wy+7} x2={wx+12} y2={wy+7} stroke="#666" strokeWidth="0.5"/>
+                {/* カーテン */}
+                <rect x={wx+1} y={wy+1} width="4" height="12" rx="0.5" fill="#ffd0d0" opacity="0.6"/>
+              </g>
+            );
+          })
+        )}
+        {/* 玄関ドア */}
+        <rect x={w/2-8} y={h-24} width="16" height="24" rx="2" fill="#8B6040" stroke="#555" strokeWidth="1"/>
+        <circle cx={w/2+4} cy={h-12} r="1.5" fill="#ddd"/>
+        {/* 玄関上の庇 */}
+        <rect x={w/2-12} y={h-26} width="24" height="4" rx="1" fill={roofColor}/>
+        {/* 煙突 */}
+        {Math.random()>0.5 && (
+          <rect x={w*0.7} y={-h*0.2} width="4" height={h*0.15} fill="#666" stroke="#444" strokeWidth="0.5"/>
+        )}
+      </svg>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// 線路
+// ─────────────────────────────────────────────
+function Rail(){
+  return(
+    <div className="absolute left-0 w-full" style={{top:"62%",height:34,zIndex:10}}>
+      {Array.from({length:36}).map((_,i)=>(
+        <div key={i} className="absolute"
+          style={{left:`${i*2.85}%`,top:0,width:17,height:34,
+            background:"linear-gradient(180deg,#7B5230 0%,#5a3a1a 100%)",borderRadius:2}}/>
+      ))}
+      <div className="absolute w-full" style={{top:3,height:8,
+        background:"linear-gradient(180deg,#d8d8d8 0%,#a8a8a8 50%,#c8c8c8 100%)",
+        boxShadow:"0 2px 5px rgba(0,0,0,0.55)"}}/>
+      <div className="absolute w-full" style={{top:23,height:8,
+        background:"linear-gradient(180deg,#d8d8d8 0%,#a8a8a8 50%,#c8c8c8 100%)",
+        boxShadow:"0 2px 5px rgba(0,0,0,0.55)"}}/>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// 電車
+// ─────────────────────────────────────────────
+function TrainSVG({def,smokeFrame}:{def:TrainDef;smokeFrame:number}){
+  return(
+    <div className="absolute train-running"
+      style={{top:"calc(62% - 90px)",left:0,zIndex:20,["--train-speed" as string]:`${def.speed}s`}}>
+      {def.id==="shinkansen" && <Shinkansen def={def}/>}
+      {def.id==="express"    && <Express def={def}/>}
+      {def.id==="steam"      && <SteamLoco def={def} smokeFrame={smokeFrame}/>}
+      {def.id==="local"      && <LocalTrain def={def}/>}
+    </div>
+  );
+}
+
+function LocalTrain({def}:{def:TrainDef}){
+  return(
+    <svg width="420" height="88" viewBox="0 0 420 88">
+      {/* 後続車両 */}
+      <rect x="2" y="4" width="195" height="70" rx="6" fill={def.color1}/>
+      <rect x="2" y="4" width="195" height="18" rx="6" fill={def.color2}/>
+      <rect x="2" y="4" width="195" height="4" rx="2" fill="#fff" opacity="0.15"/>
+      {/* 帯 */}
+      <rect x="2" y="44" width="195" height="5" fill={def.accent} opacity="0.8"/>
+      {/* 窓 */}
+      {[16,52,88,124,160].map(x=>(
+        <g key={x}>
+          <rect x={x} y="14" width="26" height="22" rx="3" fill={def.accent} stroke={def.color2} strokeWidth="1.5"/>
+          <rect x={x+2} y="14" width="8" height="22" rx="2" fill="rgba(255,255,255,0.2)"/>
+        </g>
+      ))}
+      {/* ドア */}
+      <rect x="42" y="48" width="22" height="26" rx="2" fill={def.color2}/>
+      <rect x="108" y="48" width="22" height="26" rx="2" fill={def.color2}/>
+      {/* 先頭車両 */}
+      <rect x="202" y="4" width="195" height="70" rx="6" fill={def.color1}/>
+      <rect x="202" y="4" width="195" height="18" rx="6" fill={def.color2}/>
+      <rect x="202" y="4" width="195" height="4" rx="2" fill="#fff" opacity="0.15"/>
+      <rect x="202" y="44" width="195" height="5" fill={def.accent} opacity="0.8"/>
+      {/* 先頭フェイス */}
+      <path d="M370 4 Q415 4 415 34 L415 74 L370 74 Z" fill={def.color1}/>
+      <path d="M370 4 Q415 4 415 14 L415 4 Z" fill={def.color2}/>
+      {[218,254,290].map(x=>(
+        <g key={x}>
+          <rect x={x} y="14" width="26" height="22" rx="3" fill={def.accent} stroke={def.color2} strokeWidth="1.5"/>
+          <rect x={x+2} y="14" width="8" height="22" rx="2" fill="rgba(255,255,255,0.2)"/>
+        </g>
+      ))}
+      <rect x="242" y="48" width="22" height="26" rx="2" fill={def.color2}/>
+      <rect x="330" y="48" width="22" height="26" rx="2" fill={def.color2}/>
+      {/* ヘッドライト */}
+      <rect x="400" y="56" width="13" height="9" rx="2" fill="#fffaaa"/>
+      <rect x="400" y="56" width="13" height="9" rx="2" fill="none" stroke="#ccc" strokeWidth="0.5"/>
+      {/* 車輪 */}
+      {[18,60,115,158,215,260,315,358].map(x=>(
+        <g key={x}>
+          <circle cx={x+9} cy="78" r="10" fill="#1a1a1a" stroke="#666" strokeWidth="2"/>
+          <circle cx={x+9} cy="78" r="5" fill="#333"/>
+          <line x1={x+9} y1="68" x2={x+9} y2="88" stroke="#555" strokeWidth="1.5"/>
+          <line x1={x} y1="78" x2={x+18} y2="78" stroke="#555" strokeWidth="1.5"/>
+        </g>
+      ))}
+      {/* パンタグラフ */}
+      <line x1="300" y1="4" x2="294" y2="-16" stroke="#888" strokeWidth="2"/>
+      <line x1="306" y1="4" x2="312" y2="-16" stroke="#888" strokeWidth="2"/>
+      <line x1="278" y1="-16" x2="328" y2="-16" stroke="#888" strokeWidth="2.5"/>
+    </svg>
+  );
+}
+
+function Express({def}:{def:TrainDef}){
+  return(
+    <svg width="460" height="88" viewBox="0 0 460 88">
+      {/* 後続 */}
+      <rect x="2" y="6" width="215" height="66" rx="5" fill={def.color1}/>
+      <rect x="2" y="6" width="215" height="14" rx="5" fill={def.color2}/>
+      <rect x="2" y="42" width="215" height="6" fill="#ffcc00"/>
+      <rect x="2" y="50" width="215" height="3" fill="#ffcc00" opacity="0.5"/>
+      {[14,56,98,140,182].map(x=>(
+        <g key={x}>
+          <rect x={x} y="14" width="28" height="20" rx="2" fill={def.accent} stroke={def.color2} strokeWidth="1.5"/>
+          <rect x={x+2} y="14" width="8" height="20" rx="1" fill="rgba(255,255,255,0.18)"/>
+        </g>
+      ))}
+      <rect x="40" y="52" width="24" height="20" rx="2" fill={def.color2}/>
+      <rect x="120" y="52" width="24" height="20" rx="2" fill={def.color2}/>
+      {/* 先頭 */}
+      <rect x="222" y="6" width="210" height="66" rx="5" fill={def.color1}/>
+      <rect x="222" y="6" width="210" height="14" rx="5" fill={def.color2}/>
+      <rect x="222" y="42" width="210" height="6" fill="#ffcc00"/>
+      <path d="M405 6 Q456 6 456 36 L456 72 L405 72 Z" fill={def.color1}/>
+      <path d="M405 6 Q456 6 456 16 L456 6 Z" fill={def.color2}/>
+      {[238,280,322].map(x=>(
+        <g key={x}>
+          <rect x={x} y="14" width="28" height="20" rx="2" fill={def.accent} stroke={def.color2} strokeWidth="1.5"/>
+          <rect x={x+2} y="14" width="8" height="20" rx="1" fill="rgba(255,255,255,0.18)"/>
+        </g>
+      ))}
+      <rect x="440" y="56" width="14" height="10" rx="2" fill="#fffaaa"/>
+      {[18,65,122,170,228,278,332,382].map(x=>(
+        <g key={x}>
+          <circle cx={x+9} cy="78" r="10" fill="#1a1a1a" stroke="#666" strokeWidth="2"/>
+          <circle cx={x+9} cy="78" r="5" fill="#333"/>
+        </g>
+      ))}
+      <line x1="335" y1="6" x2="329" y2="-14" stroke="#888" strokeWidth="2"/>
+      <line x1="341" y1="6" x2="347" y2="-14" stroke="#888" strokeWidth="2"/>
+      <line x1="313" y1="-14" x2="363" y2="-14" stroke="#888" strokeWidth="2.5"/>
+    </svg>
+  );
+}
+
+function Shinkansen({def}:{def:TrainDef}){
+  return(
+    <svg width="560" height="88" viewBox="0 0 560 88">
+      {/* 後続 */}
+      <rect x="2" y="10" width="250" height="60" rx="5" fill={def.color1}/>
+      <rect x="2" y="10" width="250" height="10" rx="5" fill={def.accent}/>
+      <rect x="2" y="54" width="250" height="8" fill={def.accent}/>
+      <rect x="2" y="10" width="250" height="3" fill="rgba(255,255,255,0.3)"/>
+      {[14,64,114,164,214].map(x=>(
+        <g key={x}>
+          <rect x={x} y="20" width="36" height="22" rx="3" fill="#d8eeff" stroke="#bbb" strokeWidth="1"/>
+          <rect x={x+2} y="20" width="10" height="22" rx="2" fill="rgba(255,255,255,0.25)"/>
+        </g>
+      ))}
+      {/* 先頭（流線型） */}
+      <path d="M258 10 L470 10 Q558 10 558 42 L558 70 L258 70 Z" fill={def.color1}/>
+      <path d="M258 10 L470 10 Q558 10 558 20 L558 10 Z" fill={def.accent}/>
+      <path d="M258 54 L558 54 L558 62 L258 62 Z" fill={def.accent}/>
+      <path d="M258 10 L558 10 L558 13 L258 13 Z" fill="rgba(255,255,255,0.3)"/>
+      {[272,322,372,422].map(x=>(
+        <g key={x}>
+          <rect x={x} y="20" width="36" height="22" rx="3" fill="#d8eeff" stroke="#bbb" strokeWidth="1"/>
+          <rect x={x+2} y="20" width="10" height="22" rx="2" fill="rgba(255,255,255,0.25)"/>
+        </g>
+      ))}
+      {/* ノーズライト */}
+      <ellipse cx="554" cy="64" rx="7" ry="5" fill="#fffaaa"/>
+      {/* 車輪 */}
+      {[20,78,145,202,268,325,390,448].map(x=>(
+        <g key={x}>
+          <circle cx={x+9} cy="76" r="9" fill="#444" stroke="#888" strokeWidth="2"/>
+          <circle cx={x+9} cy="76" r="4" fill="#666"/>
+        </g>
+      ))}
+      {/* パンタグラフ */}
+      <line x1="392" y1="10" x2="386" y2="-10" stroke="#aaa" strokeWidth="2"/>
+      <line x1="398" y1="10" x2="404" y2="-10" stroke="#aaa" strokeWidth="2"/>
+      <line x1="370" y1="-10" x2="420" y2="-10" stroke="#aaa" strokeWidth="2.5"/>
+    </svg>
+  );
+}
+
+function SteamLoco({def,smokeFrame}:{def:TrainDef;smokeFrame:number}){
+  // 煙: smokeFrameで揺れる複数の円
+  const smokes = [
+    {cx:0,  cy:-smokeFrame*0.4-8,  r:8+smokeFrame*0.15, op:Math.max(0,0.7-smokeFrame*0.012)},
+    {cx:4,  cy:-smokeFrame*0.5-18, r:10+smokeFrame*0.12, op:Math.max(0,0.55-smokeFrame*0.01)},
+    {cx:-3, cy:-smokeFrame*0.45-28,r:12+smokeFrame*0.1,  op:Math.max(0,0.4-smokeFrame*0.009)},
+    {cx:5,  cy:-smokeFrame*0.5-40, r:14+smokeFrame*0.08, op:Math.max(0,0.25-smokeFrame*0.007)},
+  ];
+  return(
+    <svg width="400" height="100" viewBox="0 0 400 100" style={{overflow:"visible"}}>
+      {/* 煙 */}
+      <g transform="translate(348,8)">
+        {smokes.map((s,i)=>(
+          <circle key={i} cx={s.cx} cy={s.cy} r={s.r}
+            fill="#aaa" opacity={s.op}/>
+        ))}
+      </g>
+      {/* 炭水車 */}
+      <rect x="2" y="24" width="135" height="54" rx="4" fill="#3a3a3a"/>
+      <rect x="8" y="30" width="123" height="24" rx="3" fill="#222"/>
+      <rect x="8" y="56" width="123" height="10" rx="2" fill="#444"/>
+      {/* 機関車本体 */}
+      <rect x="145" y="28" width="210" height="48" rx="5" fill={def.color1}/>
+      {/* ボイラー */}
+      <ellipse cx="308" cy="46" rx="68" ry="26" fill="#181818"/>
+      <ellipse cx="308" cy="46" rx="63" ry="22" fill="#222"/>
+      {/* ボイラーバンド */}
+      {[252,278,304,330].map(x=>(
+        <line key={x} x1={x} y1="24" x2={x} y2="68" stroke="#2a2a2a" strokeWidth="2.5"/>
+      ))}
+      {/* 煙突 */}
+      <rect x="342" y="4" width="20" height="28" rx="4" fill="#111"/>
+      <ellipse cx="352" cy="4" rx="15" ry="7" fill="#2a2a2a"/>
+      <ellipse cx="352" cy="4" rx="12" ry="5" fill="#333"/>
+      {/* ドーム */}
+      <ellipse cx="290" cy="26" rx="22" ry="13" fill="#1a1a1a"/>
+      <ellipse cx="290" cy="26" rx="18" ry="10" fill="#252525"/>
+      {/* 安全弁 */}
+      <rect x="268" y="14" width="6" height="12" rx="2" fill="#555"/>
+      {/* キャブ */}
+      <rect x="145" y="16" width="72" height="60" rx="4" fill={def.accent}/>
+      <rect x="145" y="16" width="72" height="8" rx="4" fill="#aa3300"/>
+      {/* キャブ窓 */}
+      <rect x="155" y="24" width="24" height="20" rx="3" fill="#c8e8ff" stroke="#333" strokeWidth="1.5"/>
+      <rect x="183" y="24" width="24" height="20" rx="3" fill="#c8e8ff" stroke="#333" strokeWidth="1.5"/>
+      {/* 前面ライト */}
+      <circle cx="386" cy="56" r="10" fill="#fffaaa" stroke="#888" strokeWidth="2"/>
+      <circle cx="386" cy="56" r="6" fill="#fff8cc"/>
+      {/* 連結棒 */}
+      <rect x="160" y="68" width="225" height="5" rx="2.5" fill="#cc4400"/>
+      {/* 大車輪 */}
+      {[170,222,274,326].map(x=>(
+        <g key={x}>
+          <circle cx={x} cy="80" r="16" fill="#111" stroke="#555" strokeWidth="3"/>
+          <circle cx={x} cy="80" r="8" fill="#1a1a1a"/>
+          {[0,60,120,180,240,300].map(deg=>(
+            <line key={deg}
+              x1={x+8*Math.cos(deg*Math.PI/180)} y1={80+8*Math.sin(deg*Math.PI/180)}
+              x2={x+16*Math.cos(deg*Math.PI/180)} y2={80+16*Math.sin(deg*Math.PI/180)}
+              stroke="#333" strokeWidth="2.5"/>
+          ))}
+          <circle cx={x} cy="80" r="3" fill="#555"/>
+        </g>
+      ))}
+      {/* 炭水車小車輪 */}
+      {[24,68,112].map(x=>(
+        <g key={x}>
+          <circle cx={x} cy="82" r="11" fill="#1a1a1a" stroke="#555" strokeWidth="2"/>
+          <circle cx={x} cy="82" r="5" fill="#2a2a2a"/>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+// ─────────────────────────────────────────────
+// 踏切構造物（画像に忠実）
+// ─────────────────────────────────────────────
+function FumikiriStructure({barrierAngle,isWarning}:{barrierAngle:number;isWarning:boolean}){
+  return(
+    <>
+      <div className="absolute" style={{left:"calc(50% - 120px)",top:"calc(62% - 220px)",zIndex:30}}>
+        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="left"/>
+      </div>
+      <div className="absolute" style={{left:"calc(50% + 70px)",top:"calc(62% - 220px)",zIndex:30}}>
+        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="right"/>
+      </div>
+    </>
+  );
+}
+
+function FumikiriPole({isWarning,barrierAngle,side}:{isWarning:boolean;barrierAngle:number;side:"left"|"right"}){
+  const pH=220;
+  const bLen=180;
+  const angle = side==="left" ? barrierAngle : -barrierAngle;
+
+  return(
+    <svg width="80" height={pH+35} style={{overflow:"visible"}}>
+      {/* コンクリート台座 */}
+      <rect x="8"  y={pH+2}  width="48" height="22" rx="6" fill="#b0b0b0"/>
+      <rect x="4"  y={pH+18} width="56" height="14" rx="5" fill="#909090"/>
+      <rect x="10" y={pH+2}  width="44" height="5"  rx="2" fill="#c8c8c8"/>
+
+      {/* ポール本体（黒黄ストライプ・太め） */}
+      {Array.from({length:12}).map((_,i)=>(
+        <rect key={i} x="26" y={i*18} width="16" height="18"
+          fill={i%2===0?"#1a1a1a":"#f5c800"}/>
+      ))}
+      {/* ポール輪郭 */}
+      <rect x="26" y="0" width="16" height={pH} rx="3" fill="none" stroke="#333" strokeWidth="1.5"/>
+
+      {/* ===== X字踏切標識（上部・大きめ） ===== */}
+      <g transform="translate(34,32)">
+        {/* 外枠円 */}
+        <circle cx="0" cy="0" r="28" fill="#fff" stroke="#1a1a1a" strokeWidth="3"/>
+        {/* X棒1（左上→右下）黒黄ストライプ */}
+        <g transform="rotate(-42)">
+          <clipPath id={`cp1-${side}`}>
+            <rect x="-28" y="-7" width="56" height="14" rx="6"/>
+          </clipPath>
+          <rect x="-28" y="-7" width="56" height="14" rx="6" fill="#1a1a1a" clipPath={`url(#cp1-${side})`}/>
+          {[0,1,2,3,4].map(i=>(
+            <rect key={i} x={-28+i*11+5} y="-7" width="6" height="14"
+              fill="#f5c800" clipPath={`url(#cp1-${side})`}/>
+          ))}
+          <rect x="-28" y="-7" width="56" height="14" rx="6" fill="none" stroke="#1a1a1a" strokeWidth="2"/>
+        </g>
+        {/* X棒2（右上→左下） */}
+        <g transform="rotate(42)">
+          <clipPath id={`cp2-${side}`}>
+            <rect x="-28" y="-7" width="56" height="14" rx="6"/>
+          </clipPath>
+          <rect x="-28" y="-7" width="56" height="14" rx="6" fill="#1a1a1a" clipPath={`url(#cp2-${side})`}/>
+          {[0,1,2,3,4].map(i=>(
+            <rect key={i} x={-28+i*11+5} y="-7" width="6" height="14"
+              fill="#f5c800" clipPath={`url(#cp2-${side})`}/>
+          ))}
+          <rect x="-28" y="-7" width="56" height="14" rx="6" fill="none" stroke="#1a1a1a" strokeWidth="2"/>
+        </g>
+        {/* 中央ボルト */}
+        <circle cx="0" cy="0" r="6" fill="#333" stroke="#555" strokeWidth="1.5"/>
+        <circle cx="0" cy="0" r="2" fill="#666"/>
+      </g>
+
+      {/* ===== 警告灯ユニット ===== */}
+      {/* アーム（左右に張り出す） */}
+      <line x1="34" y1="68" x2="6"  y2="80" stroke="#1a1a1a" strokeWidth="4"/>
+      <line x1="34" y1="68" x2="62" y2="80" stroke="#1a1a1a" strokeWidth="4"/>
+      {/* 灯体ボックス */}
+      <rect x="-8"  y="72" width="28" height="20" rx="4" fill="#1a1a1a" stroke="#333" strokeWidth="1.5"/>
+      <rect x="44"  y="72" width="28" height="20" rx="4" fill="#1a1a1a" stroke="#333" strokeWidth="1.5"/>
+      {/* 左灯 */}
+      <circle cx="6"  cy="82" r="11" fill="#111" stroke="#222" strokeWidth="1.5"/>
+      <circle cx="6"  cy="82" r="9"
+        fill={isWarning?undefined:"#3a0000"}
+        className={isWarning?"light-on":undefined}/>
+      <circle cx="6"  cy="82" r="4" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="1"/>
+      {/* 右灯 */}
+      <circle cx="62" cy="82" r="11" fill="#111" stroke="#222" strokeWidth="1.5"/>
+      <circle cx="62" cy="82" r="9"
+        fill={isWarning?undefined:"#3a0000"}
+        className={isWarning?"light-inv":undefined}/>
+      <circle cx="62" cy="82" r="4" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="1"/>
+
+      {/* ===== 方向指示板 ===== */}
+      <rect x="18" y="96" width="32" height="24" rx="4" fill="#1a1a1a" stroke="#333" strokeWidth="1.5"/>
+      <rect x="20" y="98" width="28" height="10" rx="2" fill="#111"/>
+      <rect x="20" y="110" width="28" height="8"  rx="2" fill="#111"/>
+      {/* 矢印 */}
+      <text x="34" y="107" textAnchor="middle" fontSize="9" fontWeight="bold"
+        fill={isWarning?"#ff2200":"#550000"}>→</text>
+      <text x="34" y="117" textAnchor="middle" fontSize="9" fontWeight="bold"
+        fill={isWarning?"#ff2200":"#550000"}>←</text>
+
+      {/* ===== 遮断機 ===== */}
+      <g style={{
+        transform:`rotate(${angle}deg)`,
+        transformOrigin:"34px 124px",
+        transition:"transform 1.6s ease-in-out",
+      }}>
+        {/* メインバー（黒黄ストライプ） */}
+        {Array.from({length:Math.ceil(bLen/22)}).map((_,i)=>(
+          <rect key={i}
+            x={side==="left"? 34+i*22 : 34-(i+1)*22}
+            y="119" width="22" height="12"
+            fill={i%2===0?"#1a1a1a":"#f5c800"}/>
+        ))}
+        <rect x={side==="left"?34:34-bLen} y="119"
+          width={bLen} height="12" rx="3"
+          fill="none" stroke="#1a1a1a" strokeWidth="2"/>
+        {/* バー上面ハイライト */}
+        <rect x={side==="left"?34:34-bLen} y="119"
+          width={bLen} height="3" rx="2"
+          fill="rgba(255,255,255,0.15)"/>
+
+        {/* 垂れ下がり（赤白ストライプ棒） */}
+        {Array.from({length:8}).map((_,i)=>{
+          const bx = side==="left" ? 34+24+i*22 : 34-24-i*22;
+          return(
+            <g key={i}>
+              <rect x={bx-4} y="131" width="8" height="30" rx="3" fill="#fff" stroke="#ddd" strokeWidth="0.5"/>
+              {[0,1,2,3].map(j=>(
+                <rect key={j} x={bx-4} y={131+j*7.5} width="8" height="7.5"
+                  fill={j%2===0?"#e8001a":"#fff"}/>
+              ))}
+              <rect x={bx-4} y="131" width="8" height="30" rx="3" fill="none" stroke="#ccc" strokeWidth="0.5"/>
+            </g>
+          );
+        })}
+        {/* 先端ウェイト */}
+        <rect x={side==="left"?34+bLen-22:34-bLen} y="115" width="22" height="20" rx="3"
+          fill="#1a1a1a" stroke="#f5c800" strokeWidth="2.5"/>
+        <rect x={side==="left"?34+bLen-22:34-bLen} y="115" width="22" height="5" rx="2"
+          fill="#f5c800" opacity="0.6"/>
+      </g>
+    </svg>
+  );
+}
+
+// ─────────────────────────────────────────────
+// フェーズラベル
+// ─────────────────────────────────────────────
+function PhaseLabel({phase}:{phase:Phase}){
+  const labels:Record<Phase,string>={
+    idle:"🟢 ふみきり あいてるよ", warning:"🔴 でんしゃが くるよ！",
+    closed:"🚧 とおれません！", passing:"🚃 でんしゃ つうかちゅう！",
+    opening:"🟡 もうすぐ あくよ", done:"✅ とおれるよ！",
+  };
+  const colors:Record<Phase,string>={
+    idle:"#27ae60", warning:"#e74c3c", closed:"#c0392b",
+    passing:"#2980b9", opening:"#f39c12", done:"#27ae60",
+  };
+  return(
+    <div className="absolute top-4 left-1/2 -translate-x-1/2 px-6 py-2 rounded-full text-white text-lg font-bold shadow-lg"
+      style={{background:colors[phase],textShadow:"1px 1px 2px rgba(0,0,0,0.4)",transition:"background 0.5s",zIndex:50}}>
+      {labels[phase]}
+    </div>
+  );
+}

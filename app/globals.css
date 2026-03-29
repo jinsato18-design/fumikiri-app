@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+  overflow: hidden;
+}
+
+/* 警告灯（SVG circle） */
+@keyframes blink-red {
+  0%,49%  { fill: #ff2200; filter: drop-shadow(0 0 12px #ff4400); }
+  50%,100%{ fill: #3a0000; filter: none; }
+}
+@keyframes blink-red-inv {
+  0%,49%  { fill: #3a0000; filter: none; }
+  50%,100%{ fill: #ff2200; filter: drop-shadow(0 0 12px #ff4400); }
+}
+.light-on  { animation: blink-red     0.76s step-end infinite; }
+.light-inv { animation: blink-red-inv 0.76s step-end infinite; }
+
+/* 電車走行 */
+@keyframes train-pass {
+  from { transform: translateX(-700px); }
+  to   { transform: translateX(110vw); }
+}
+.train-running {
+  animation: train-pass var(--train-speed, 3.5s) linear forwards;
+}
+
+/* 雲 */
+@keyframes cloud-move {
+  from { transform: translateX(-350px); }
+  to   { transform: translateX(110vw); }
+}
+.cloud1 { animation: cloud-move 22s linear infinite; }
+.cloud2 { animation: cloud-move 30s linear infinite 9s; }
+.cloud3 { animation: cloud-move 26s linear infinite 15s; }
+.cloud4 { animation: cloud-move 18s linear infinite 4s; }
