@@ -12,8 +12,8 @@ type CrosserType = "person" | "child" | "car" | "bike";
 interface Crosser {
   id: number;
   type: CrosserType;
-  x: number;       // 0〜100 vw
-  dir: 1 | -1;     // 1=右→左, -1=左→右
+  y: number;       // 画面下からのpx。道路の手前から奥へ移動
+  dir: 1 | -1;     // 1=手前→奥(bottom増加), -1=奥→手前(bottom減少)
   speed: number;
   emoji: string;
   crashed: boolean;
@@ -199,16 +199,15 @@ export default function FumikiriApp() {
   const canPress  = phase==="idle" || phase==="done";
   const isOpen    = phase==="idle" || phase==="done" || phase==="opening";
 
-  // 渡れる人・車を動かす
+  // 渡れる人・車を動かす（y方向: 道路を縦断）
   useEffect(()=>{
     const id = setInterval(()=>{
       setCrossers(prev=>{
-        const next = prev.map(c=>{
+        return prev.map(c=>{
           if(c.crashed) return c;
-          const nx = c.x + c.dir * c.speed;
-          return {...c, x: nx};
-        }).filter(c=>c.x>-5 && c.x<110);
-        return next;
+          const ny = c.y + c.dir * c.speed * 0.8;
+          return {...c, y: ny};
+        }).filter(c=>c.y>-10 && c.y<100);
       });
     }, 50);
     return ()=>clearInterval(id);
@@ -221,8 +220,8 @@ export default function FumikiriApp() {
       setCrossers(prev=>{
         let hit=false;
         const next = prev.map(c=>{
-          // 踏切エリア: 画面中央±12%
-          if(!c.crashed && c.x>38 && c.x<62){
+          // 線路エリア: bottom 62%付近 ± 3% (yがvh%換算で59〜65あたり)
+          if(!c.crashed && c.y>57 && c.y<68){
             hit=true;
             return {...c, crashed:true};
           }
@@ -297,19 +296,17 @@ export default function FumikiriApp() {
     },1600);
   },[canPress,startBell,stopBell,stopTrainSnd,trainDef,startSmoke,stopSmoke]);
 
-  // 渡り者を追加
+  // 渡り者を追加（道路を縦断: 手前→奥 or 奥→手前）
   const addCrosser = useCallback((type: CrosserType)=>{
     if(!isOpen) return;
     const def = CROSSER_DEFS.find(d=>d.type===type)!;
-    // 道路は画面中央(50%)±9.5%(190px/2 ÷ 画面幅1000px想定)
-    // 左端から来る or 右端から来る（道路の外側から登場）
-    const fromLeft = Math.random()>0.5;
+    const fromBottom = Math.random()>0.5; // 手前(下)から来るか、奥(上)から来るか
     const newC: Crosser = {
       id: ++crosserIdSeq,
       type,
-      emoji: fromLeft ? def.emoji : def.emojiLeft,
-      x: fromLeft ? 40.5 : 59.5,   // 道路の左端 or 右端から出発
-      dir: fromLeft ? 1 : -1,
+      emoji: def.emoji,
+      y: fromBottom ? 2 : 90,   // 手前=bottom 2vh, 奥=bottom 90vh相当
+      dir: fromBottom ? 1 : -1, // 1=奥へ(y増加), -1=手前へ(y減少)
       speed: def.speed,
       crashed: false,
     };
@@ -393,13 +390,12 @@ export default function FumikiriApp() {
       {/* 線路 */}
       <Rail/>
 
-      {/* 渡り者（踏切の道路上を通る） */}
+      {/* 渡り者（踏切の道路を縦断: 線路と垂直方向に移動） */}
       {crossers.map(c=>(
         <div key={c.id} className="absolute"
           style={{
-            left:`${c.x}%`,
-            // 道路は bottom:0〜37%。歩道の上（bottom:37%+32px）ではなく道路面上
-            bottom:"calc(37% + 14px)",
+            left:"calc(50% - 14px)",  // 道路中央に固定
+            bottom:`${c.y}%`,
             fontSize: c.type==="car"?26:20,
             zIndex:22,
             filter: c.crashed?"grayscale(1) brightness(0.4)":"none",
