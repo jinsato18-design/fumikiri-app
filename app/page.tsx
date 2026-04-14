@@ -1117,40 +1117,41 @@ function FumikiriStructure({barrierAngle,isWarning,W,H}:{barrierAngle:number;isW
   const roadRightX = cx + railHalfW;
   const roadW = railHalfW * 2;
 
-  // バー長に合わせてポール全体をスケール（基準: bLen=180, pH=220）
+  // ポールの高さは画面高さの15%に固定（バー長とは独立）
   const BASE_BLEN = 180;
-  const scale = roadW / BASE_BLEN;
-  const pH = 220; // SVG内の基準ポール高さ
-  const scaledH = (pH + 35) * scale;
+  const poleScale = (H * 0.15) / 220; // pH=220 を基準にポール高さをスケール
+  const barScale  = roadW / BASE_BLEN; // バー長のスケール（道路幅に合わせる）
+  const pH = 220;
+  const scaledH = (pH + 35) * poleScale;
 
   // ポールのtop: 線路Y - スケール後のポール高さ
   const poleTop = yRail - scaledH;
-  // ポールのleft: ポール中心(SVG内x=34)をスケールした分オフセット
-  const poleOffsetX = 34 * scale;
+  // ポールのleft: ポール中心(SVG内x=34)をpoleScaleした分オフセット
+  const poleOffsetX = 34 * poleScale;
 
   return(
     <>
       {/* 左ポール */}
       <div className="absolute" style={{left: roadLeftX - poleOffsetX, top: poleTop, zIndex:30}}>
-        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="left" bLen={roadW} scale={scale}/>
+        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="left" bLen={roadW} poleScale={poleScale} barScale={barScale}/>
       </div>
       {/* 右ポール */}
       <div className="absolute" style={{left: roadRightX - poleOffsetX, top: poleTop, zIndex:30}}>
-        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="right" bLen={roadW} scale={scale}/>
+        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="right" bLen={roadW} poleScale={poleScale} barScale={barScale}/>
       </div>
     </>
   );
 }
 
-function FumikiriPole({isWarning,barrierAngle,side,bLen,scale}:{isWarning:boolean;barrierAngle:number;side:"left"|"right";bLen:number;scale:number}){
+function FumikiriPole({isWarning,barrierAngle,side,bLen,poleScale,barScale}:{isWarning:boolean;barrierAngle:number;side:"left"|"right";bLen:number;poleScale:number;barScale:number}){
   const pH=220;
   const angle = side==="left" ? barrierAngle : -barrierAngle;
-  // bLenはスケール後の実ピクセル値なのでSVG内では基準値(180)を使い、svgをscaleで拡大する
-  const svgBLen = 180;
+  // SVG内でのバー長: 実際の道路幅をpoleScaleで割り戻す
+  const svgBarLen = Math.round(180 * (barScale / poleScale));
 
   return(
     <svg
-      width={80 * scale} height={(pH+35) * scale}
+      width={80 * poleScale} height={(pH+35) * poleScale}
       viewBox={`0 0 80 ${pH+35}`}
       style={{overflow:"visible", display:"block"}}
     >
@@ -1235,18 +1236,18 @@ function FumikiriPole({isWarning,barrierAngle,side,bLen,scale}:{isWarning:boolea
         transition:"transform 1.6s ease-in-out",
       }}>
         {/* メインバー（黒黄ストライプ） */}
-        {Array.from({length:Math.ceil(svgBLen/22)}).map((_,i)=>(
+        {Array.from({length:Math.ceil(svgBarLen/22)}).map((_,i)=>(
           <rect key={i}
             x={side==="left"? 34+i*22 : 34-(i+1)*22}
             y="119" width="22" height="12"
             fill={i%2===0?"#1a1a1a":"#f5c800"}/>
         ))}
-        <rect x={side==="left"?34:34-svgBLen} y="119"
-          width={svgBLen} height="12" rx="3"
+        <rect x={side==="left"?34:34-svgBarLen} y="119"
+          width={svgBarLen} height="12" rx="3"
           fill="none" stroke="#1a1a1a" strokeWidth="2"/>
         {/* バー上面ハイライト */}
-        <rect x={side==="left"?34:34-svgBLen} y="119"
-          width={svgBLen} height="3" rx="2"
+        <rect x={side==="left"?34:34-svgBarLen} y="119"
+          width={svgBarLen} height="3" rx="2"
           fill="rgba(255,255,255,0.15)"/>
 
         {/* 垂れ下がり（赤白ストライプ棒） */}
@@ -1264,9 +1265,9 @@ function FumikiriPole({isWarning,barrierAngle,side,bLen,scale}:{isWarning:boolea
           );
         })}
         {/* 先端ウェイト */}
-        <rect x={side==="left"?34+svgBLen-22:34-svgBLen} y="115" width="22" height="20" rx="3"
+        <rect x={side==="left"?34+svgBarLen-22:34-svgBarLen} y="115" width="22" height="20" rx="3"
           fill="#1a1a1a" stroke="#f5c800" strokeWidth="2.5"/>
-        <rect x={side==="left"?34+svgBLen-22:34-svgBLen} y="115" width="22" height="5" rx="2"
+        <rect x={side==="left"?34+svgBarLen-22:34-svgBarLen} y="115" width="22" height="5" rx="2"
           fill="#f5c800" opacity="0.6"/>
       </g>
     </svg>
