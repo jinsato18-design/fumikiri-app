@@ -235,8 +235,9 @@ export default function FumikiriApp() {
         return prev.map(c=>{
           if(c.crashed) return c;
           // 消失点(VP=62%)に近いほど速度を落とす（遠近感）
+          // y小=手前(bottom低い), y大=奥(消失点に近い)
           const VP = 62;
-          const t = Math.max(0, Math.min(1, c.y / VP)); // 0=奥, 1=手前
+          const t = Math.max(0, Math.min(1, 1 - c.y / VP)); // 1=手前, 0=奥
           const scale = Math.max(0.2, t);               // 0.2〜1.0
           const moveAmount = c.speed * scale * 1.8;
           const ny = c.y + c.dir * moveAmount;
@@ -419,9 +420,10 @@ export default function FumikiriApp() {
 
       {/* 渡り者（踏切の道路を縦断: 線路と垂直方向に移動） */}
       {crossers.map(c=>{
-        // VP = bottom:62%。t: 0=奥(消失点), 1=手前
+        // VP = bottom:62%。y小=手前(bottom低い), y大=奥(消失点に近い)
+        // t: 1=手前, 0=奥
         const VP = 62;
-        const t = Math.max(0, Math.min(1, c.y / VP));
+        const t = Math.max(0, Math.min(1, 1 - c.y / VP));
         // scale: 手前1.0 〜 奥0.2
         const scale   = 0.2 + 0.8 * t;
         // opacity: 消失点付近でフェードアウト
