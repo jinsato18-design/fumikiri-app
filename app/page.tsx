@@ -427,18 +427,18 @@ export default function FumikiriApp() {
         // opacity: 消失点付近でフェードアウト
         const opacity = Math.max(0, t);
         const dynRoadW = Math.max(4, ROAD_W * scale);
-        // dir=1(奥向き)=左レーン、dir=-1(手前向き)=右レーン
-        // scaleと連動させることで奥に行くほど中央に寄る
-        const laneOffset = c.dir * 15 * scale;
+        // 日本の左側通行（向こうへ行く車は左寄りに、こちらへ来る車は右寄りに配置）
+        // パースに合わせて、奥に行くほど中央に寄るよう scale を乗算する
         return (
           <div key={c.id} className="absolute"
             style={{
-              left:`calc(50% + ${laneOffset}%)`,
+              left:`calc(50% + ${c.dir * -18 * scale}%)`,
               bottom:`${c.y}%`,
               transform:`translateX(-50%) scale(${scale})`,
               transformOrigin:"bottom center",
               opacity,
-              zIndex:22,
+              // yが小さい（手前）ほど zIndex を大きくする
+              zIndex: Math.floor(100 - c.y),
               filter: c.crashed?"grayscale(1) brightness(0.4)":"none",
               transition:"filter 0.2s",
               display:"flex",
