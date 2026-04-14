@@ -3,6 +3,20 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
 // ─────────────────────────────────────────────
+// 画面サイズフック
+// ─────────────────────────────────────────────
+function useWindowSize() {
+  const [size, setSize] = useState({ w: 1280, h: 720 });
+  useEffect(() => {
+    const update = () => setSize({ w: window.innerWidth, h: window.innerHeight });
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+  return size;
+}
+
+// ─────────────────────────────────────────────
 // 型
 // ─────────────────────────────────────────────
 type Phase = "idle" | "warning" | "closed" | "passing" | "opening" | "done";
@@ -192,6 +206,7 @@ function playHorn(ctx: AudioContext, type: TrainType) {
 let crosserIdSeq = 0;
 
 export default function FumikiriApp() {
+  const { w: W, h: H } = useWindowSize();
   const [phase, setPhase]               = useState<Phase>("idle");
   const [barrierAngle, setBarrierAngle] = useState(-85); // -85=上向き, 0=水平
   const [trainVisible, setTrainVisible] = useState(false);
@@ -371,7 +386,7 @@ export default function FumikiriApp() {
       </svg>
 
       {/* 道路（SVG台形で奥行き表現: 手前が広く奥が狭い） */}
-      <RoadSVG/>
+      <RoadSVG W={W} H={H}/>
 
       {/* 縁石・歩道 */}
       <div className="absolute left-0 w-full" style={{bottom:"37%",height:10,background:"#999",zIndex:5}}/>
@@ -396,16 +411,14 @@ export default function FumikiriApp() {
 
       {/* 渡り者（踏切の道路を縦断: 線路と垂直方向に移動） */}
       {crossers.map(c=>{
-        // 透視投影: y%に応じてx位置とスケールを計算
-        // viewBox: y=1000(bottom=0%) → y=320(bottom=68%)が消失点
-        // bottom=c.y% → svgY = 1000*(1-c.y/100)
-        const svgY = 1000 * (1 - c.y / 100);
-        const vpY  = 320;
-        const yBot = 1000;
-        const t    = Math.max(0, (svgY - vpY) / (yBot - vpY)); // 0(奥)〜1(手前)
-        // 手前ほど大きく、奥ほど小さく
-        const scale = 0.3 + t * 0.7;
-        // 画面中央に固定（道路中心）
+        // 実際のpxで透視スケール計算
+        // 消失点Y = H*0.38（線路位置）
+        const vpY = H * 0.38;
+        const yBot = H;
+        // bottom=c.y% → 画面上端からのpx = H*(1-c.y/100)
+        const svgY = H * (1 - c.y / 100);
+        const t = Math.max(0, Math.min(1, (svgY - vpY) / (yBot - vpY)));
+        const scale = 0.25 + t * 0.75; // 奥=0.25、手前=1.0
         return (
           <div key={c.id} className="absolute"
             style={{
@@ -681,79 +694,85 @@ function CrosserSVG({type, dir, roadW}:{type:CrosserType; dir:1|-1; roadW:number
 
 // ─────────────────────────────────────────────
 // ─────────────────────────────────────────────
-// 道路SVG（一点透視: 手前=画面端まで広く、奥=消失点に収束）
-// viewBox 1000x1000。y=1000が画面下端(bottom=0)、y=0が画面上端(bottom=100%)
-// 線路は bottom=62% → y=380
-// 消失点: x=500, y=320（線路より少し奥）
+// 道路SVG（実際のpxで正しい一点透視）
+// 消失点 = 線路位置（画面中央、bottom=62%）
+// 手前(y=H)で幅=W(全幅)、消失点(y=H*0.38)で幅=0に収束
 // ─────────────────────────────────────────────
-function RoadSVG() {
-  const cx   = 500;   // 消失点X（画面中央）
-  const vpY  = 320;   // 消失点Y（線路より少し上）
-  const yBot = 1000;  // 画面下端
-  const yRail= 380;   // 線路位置
-  const yFar = 260;   // 奥端（線路より上）
+function RoadSVG({ W, H }: { W: number; H: number }) {
+  const cx  = W / 2;           // 消失点X（画面中央）
+  const vpY = H * (1 - 0.62);  // 消失点Y = 線路位置 = H*0.38
+  const yBot = H;               // 画面下端
+  const yFar = vpY + 2;         // 奥端（消失点のすぐ手前）
 
-  // 手前端の道路幅: 画面端まで（左端0〜右端1000）
-  const xBotL = 0;
-  const xBotR = 1000;
+  // y位置での道路の左右端X座標（消失点から線形に広がる）
+  const xL = (y: number) => {
+    const t = (y - vpY) / (yBot - vpY); // 0(消失点)〜1(手前)
+    return cx - (W / 2) * Math.max(0, t);
+  };
+  const xR = (y: number) => {
+    const t = (y - vpY) / (yBot - vpY);
+    return cx + (W / 2) * Math.max(0, t);
+  };
 
-  // 線路位置での幅: 消失点に向かって収束
-  // 透視投影: t=(y-vpY)/(yBot-vpY) で幅をスケール
-  const tRail = (yRail - vpY) / (yBot - vpY);
-  const tFar  = (yFar  - vpY) / (yBot - vpY);
+  const pts = (arr: [number, number][]) => arr.map(p => p.join(",")).join(" ");
 
-  const halfWBot  = (xBotR - xBotL) / 2;  // 500
-  const xRailL = cx - halfWBot * tRail;
-  const xRailR = cx + halfWBot * tRail;
-  const xFarL  = cx - halfWBot * tFar;
-  const xFarR  = cx + halfWBot * tFar;
+  // センターライン破線（透視的に等間隔に見えるよう対数配置）
+  const dashLines: { y1: number; y2: number }[] = [];
+  const steps = 14;
+  for (let i = 0; i < steps; i++) {
+    // 透視的な間隔: 手前ほど広く見えるよう二乗で配置
+    const t1 = Math.pow(i / steps, 1.5);
+    const t2 = Math.pow((i + 0.45) / steps, 1.5);
+    const y1 = yBot - (yBot - yFar) * t1;
+    const y2 = yBot - (yBot - yFar) * t2;
+    if (y2 >= yFar && y1 <= yBot) dashLines.push({ y1, y2 });
+  }
 
-  const pts = (arr:[number,number][]) => arr.map(p=>p.join(",")).join(" ");
-
-  // 破線（センターライン）: 手前→線路 を10分割
-  const dashLines = Array.from({length:10},(_,i)=>{
-    const t1 = (yBot - vpY) * ((i*2+0.15)/20);
-    const t2 = (yBot - vpY) * ((i*2+0.85)/20);
-    const y1 = vpY + t1;
-    const y2 = vpY + t2;
-    if(y1 > yBot || y2 < yFar) return null;
-    const cy1 = Math.min(yBot, Math.max(yFar, y1));
-    const cy2 = Math.min(yBot, Math.max(yFar, y2));
-    return {y1:cy1, y2:cy2};
-  }).filter(Boolean) as {y1:number,y2:number}[];
+  // 踏切横断帯（線路位置）
+  const yRail = vpY + 4;
+  const railW = xR(yRail) - xL(yRail);
 
   return (
-    <svg className="absolute left-0 w-full h-full"
-      style={{top:0,left:0,zIndex:8,pointerEvents:"none"}}
-      viewBox="0 0 1000 1000" preserveAspectRatio="none">
-
-      {/* 手前側道路面（台形: 画面下端〜線路） */}
+    <svg
+      className="absolute left-0 top-0 w-full h-full"
+      style={{ zIndex: 8, pointerEvents: "none" }}
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+    >
+      {/* 道路面（台形: 手前=全幅、消失点=幅0） */}
       <polygon
-        points={pts([[xBotL,yBot],[xBotR,yBot],[xRailR,yRail],[xRailL,yRail]])}
-        fill="#4a4a4a"/>
-      {/* 奥側道路面（台形: 線路〜奥端） */}
-      <polygon
-        points={pts([[xRailL,yRail],[xRailR,yRail],[xFarR,yFar],[xFarL,yFar]])}
-        fill="#525252"/>
+        points={pts([
+          [xL(yBot), yBot],
+          [xR(yBot), yBot],
+          [xR(yFar), yFar],
+          [xL(yFar), yFar],
+        ])}
+        fill="#4a4a4a"
+      />
 
-      {/* 路肩線（左）: 消失点に向かって収束 */}
-      <line x1={xBotL} y1={yBot} x2={xFarL} y2={yFar}
-        stroke="#fff" strokeWidth="4" opacity="0.7"/>
+      {/* 路肩線（左）: 消失点に収束 */}
+      <line x1={xL(yBot)} y1={yBot} x2={cx} y2={vpY}
+        stroke="#e0e0e0" strokeWidth="3" opacity="0.8" />
       {/* 路肩線（右） */}
-      <line x1={xBotR} y1={yBot} x2={xFarR} y2={yFar}
-        stroke="#fff" strokeWidth="4" opacity="0.7"/>
+      <line x1={xR(yBot)} y1={yBot} x2={cx} y2={vpY}
+        stroke="#e0e0e0" strokeWidth="3" opacity="0.8" />
 
       {/* センターライン（破線） */}
-      {dashLines.map((l,i)=>(
+      {dashLines.map((l, i) => (
         <line key={i} x1={cx} y1={l.y1} x2={cx} y2={l.y2}
-          stroke="#fff" strokeWidth="3" strokeLinecap="round"
-          opacity="0.85"/>
+          stroke="#fff" strokeWidth="3" strokeLinecap="round" opacity="0.9" />
       ))}
 
-      {/* 線路位置の横断帯（踏切部分を示す） */}
+      {/* 踏切横断帯 */}
       <polygon
-        points={pts([[xRailL-2,yRail+8],[xRailR+2,yRail+8],[xRailR+2,yRail-8],[xRailL-2,yRail-8]])}
-        fill="#5a5a5a" opacity="0.6"/>
+        points={pts([
+          [cx - railW / 2, yRail + 8],
+          [cx + railW / 2, yRail + 8],
+          [cx + railW / 2, yRail - 8],
+          [cx - railW / 2, yRail - 8],
+        ])}
+        fill="#5a5a5a" opacity="0.5"
+      />
     </svg>
   );
 }
