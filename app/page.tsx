@@ -712,8 +712,8 @@ function CrosserSVG({type, dir, roadW}:{type:CrosserType; dir:1|-1; roadW:number
     const w=bikeW, h=Math.round(bikeW*2.8);
     const goingAway = dir===1;
     const skinColor="#f5a623"; const bodyColor="#27ae60";
-    // 車輪は側面から見た楕円（横長）で表現
-    const wheelRx = 9, wheelRy = 4;
+    // 車輪は地面と垂直（縦長楕円）で表現
+    const wheelRx = 3, wheelRy = 9;
     const frontWheelY = goingAway ? 44 : 12;
     const rearWheelY  = goingAway ? 12 : 44;
     return(
