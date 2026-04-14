@@ -360,24 +360,12 @@ export default function FumikiriApp() {
   const startGodzilla = useCallback(()=>{
     if(godzilla) return;
     setGodzilla(true);
-    setGodzillaX(110);
     // 全キャラをクラッシュ
     setCrossers(prev=>prev.map(c=>({...c,crashed:true})));
     stopBell(); stopTrainSnd(); stopSmoke();
     setPhase("warning");
-    // ゴジラが画面右から左へ歩いてくる
-    let x = 110;
-    const walk = setInterval(()=>{
-      x -= 1.2;
-      setGodzillaX(x);
-      // 熱線は中央付近で発射
-      if(x < 70 && x > 30) setHeatRay(true);
-      else setHeatRay(false);
-      if(x < -30) {
-        clearInterval(walk);
-        setHeatRay(false);
-      }
-    }, 50);
+    // 少し遅れて熱線発射
+    setTimeout(()=>setHeatRay(true), 600);
   },[godzilla, stopBell, stopTrainSnd, stopSmoke]);
 
   useEffect(()=>()=>{stopBell();stopTrainSnd();stopSmoke();},[stopBell,stopTrainSnd,stopSmoke]);
@@ -573,7 +561,7 @@ export default function FumikiriApp() {
       )}
 
       {/* ゴジラ */}
-      {godzilla && <GodzillaSVG x={godzillaX} heatRay={heatRay}/>}
+      {godzilla && <GodzillaSVG heatRay={heatRay}/>}
 
       {/* ゲームオーバーオーバーレイ */}
       {godzilla && (
@@ -1278,57 +1266,214 @@ function PhaseLabel({phase}:{phase:Phase}){
 }
 
 // ─────────────────────────────────────────────
-// ゴジラSVG
+// ゴジラSVG（画像再現版・中央固定・巨大）
 // ─────────────────────────────────────────────
-function GodzillaSVG({x, heatRay}:{x:number; heatRay:boolean}){
+function GodzillaSVG({heatRay}:{heatRay:boolean}){
   return(
-    <div className="absolute" style={{
-      left:`${x}%`, bottom:"37%",
-      transform:"translateX(-50%)",
-      transformOrigin:"bottom center",
-      zIndex:200, pointerEvents:"none",
-    }}>
-      <svg width="180" height="320" viewBox="0 0 180 320" style={{display:"block"}}>
-        {/* 尻尾 */}
-        <path d="M140,280 Q180,260 200,220 Q210,190 190,170" stroke="#2d5a1b" strokeWidth="18" fill="none" strokeLinecap="round"/>
-        {/* 胴体 */}
-        <ellipse cx="90" cy="220" rx="55" ry="70" fill="#3a7a25"/>
-        {/* 背びれ */}
+    <div className="absolute inset-0 flex items-end justify-center" style={{zIndex:200, pointerEvents:"none"}}>
+      <svg width="100%" height="100%" viewBox="0 0 800 900" preserveAspectRatio="xMidYMax meet" style={{display:"block"}}>
+        <defs>
+          {/* 体のグラデーション：黒〜濃紺 */}
+          <radialGradient id="bodyGrad" cx="50%" cy="40%" r="60%">
+            <stop offset="0%" stopColor="#1a3a4a"/>
+            <stop offset="60%" stopColor="#0d1f2d"/>
+            <stop offset="100%" stopColor="#050d14"/>
+          </radialGradient>
+          {/* 胸・腹の青緑グラデーション */}
+          <radialGradient id="chestGrad" cx="50%" cy="50%" r="55%">
+            <stop offset="0%" stopColor="#2a9a8a"/>
+            <stop offset="50%" stopColor="#1a6a6a"/>
+            <stop offset="100%" stopColor="#0d3a3a"/>
+          </radialGradient>
+          {/* 背びれの発光 */}
+          <radialGradient id="spineGlow" cx="50%" cy="100%" r="80%">
+            <stop offset="0%" stopColor="#80e8ff" stopOpacity="1"/>
+            <stop offset="60%" stopColor="#00aadd" stopOpacity="0.7"/>
+            <stop offset="100%" stopColor="#003366" stopOpacity="0"/>
+          </radialGradient>
+          {/* 熱線グラデーション */}
+          <linearGradient id="heatGrad" x1="100%" y1="0%" x2="0%" y2="10%">
+            <stop offset="0%" stopColor="#ffffff"/>
+            <stop offset="20%" stopColor="#aaeeff"/>
+            <stop offset="60%" stopColor="#0088ff"/>
+            <stop offset="100%" stopColor="#0033aa" stopOpacity="0"/>
+          </linearGradient>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="6" result="blur"/>
+            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+          <filter id="spineFilter">
+            <feGaussianBlur stdDeviation="4" result="blur"/>
+            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+
+        {/* ===== 尻尾（右側） ===== */}
+        <path d="M620,700 Q700,640 740,560 Q770,490 750,420 Q730,360 700,340"
+          stroke="#0d1f2d" strokeWidth="70" fill="none" strokeLinecap="round"/>
+        <path d="M620,700 Q700,640 740,560 Q770,490 750,420 Q730,360 700,340"
+          stroke="#1a3a4a" strokeWidth="50" fill="none" strokeLinecap="round"/>
+        {/* 尻尾のウロコ模様 */}
+        {[0,1,2,3,4,5].map(i=>{
+          const t=i/5;
+          const tx=620+t*80, ty=700-t*360;
+          return <ellipse key={i} cx={tx} cy={ty} rx={28-i*3} ry={12-i*1.5} fill="#0a1820" opacity="0.6"/>;
+        })}
+
+        {/* ===== 下半身・脚（画面下部） ===== */}
+        {/* 左脚 */}
+        <path d="M310,820 Q280,860 260,900" stroke="#0d1f2d" strokeWidth="110" fill="none" strokeLinecap="round"/>
+        <path d="M310,820 Q280,860 260,900" stroke="#1a3a4a" strokeWidth="80" fill="none" strokeLinecap="round"/>
+        {/* 右脚 */}
+        <path d="M490,820 Q520,860 540,900" stroke="#0d1f2d" strokeWidth="110" fill="none" strokeLinecap="round"/>
+        <path d="M490,820 Q520,860 540,900" stroke="#1a3a4a" strokeWidth="80" fill="none" strokeLinecap="round"/>
+
+        {/* ===== 胴体メイン ===== */}
+        <ellipse cx="400" cy="720" rx="200" ry="200" fill="url(#bodyGrad)"/>
+        {/* ウロコテクスチャ（胴体） */}
+        {Array.from({length:8}).map((_,row)=>
+          Array.from({length:10}).map((_,col)=>{
+            const cx=240+col*36+(row%2)*18, cy=580+row*38;
+            return <ellipse key={`${row}-${col}`} cx={cx} cy={cy} rx="14" ry="10"
+              fill="none" stroke="#0a1520" strokeWidth="1.5" opacity="0.5"/>;
+          })
+        )}
+
+        {/* ===== 胸・腹（青緑） ===== */}
+        <ellipse cx="390" cy="680" rx="120" ry="160" fill="url(#chestGrad)"/>
+        {/* 腹のウロコ */}
+        {Array.from({length:6}).map((_,row)=>
+          Array.from({length:5}).map((_,col)=>{
+            const cx=310+col*34, cy=560+row*42;
+            return <ellipse key={`c${row}-${col}`} cx={cx} cy={cy} rx="13" ry="9"
+              fill="none" stroke="#0d4a44" strokeWidth="1.5" opacity="0.6"/>;
+          })
+        )}
+
+        {/* ===== 背びれ（発光） ===== */}
+        {/* 大きい背びれ群 */}
+        {[
+          {x:430,y:380,w:38,h:110},
+          {x:460,y:340,w:32,h:130},
+          {x:490,y:310,w:28,h:150},
+          {x:515,y:330,w:24,h:130},
+          {x:538,y:360,w:20,h:110},
+          {x:558,y:390,w:16,h:90},
+          {x:575,y:420,w:13,h:70},
+        ].map((s,i)=>(
+          <g key={i} filter="url(#spineFilter)">
+            <polygon
+              points={`${s.x-s.w/2},${s.y+s.h} ${s.x},${s.y} ${s.x+s.w/2},${s.y+s.h}`}
+              fill="url(#spineGlow)" opacity="0.9"/>
+            <polygon
+              points={`${s.x-s.w/2+4},${s.y+s.h} ${s.x},${s.y+10} ${s.x+s.w/2-4},${s.y+s.h}`}
+              fill="#80e8ff" opacity="0.5"/>
+          </g>
+        ))}
+
+        {/* ===== 首 ===== */}
+        <path d="M330,500 Q350,440 380,400 Q400,370 420,360 Q450,350 470,370 Q490,390 480,440 Q470,490 450,520"
+          fill="url(#bodyGrad)" stroke="#0a1520" strokeWidth="2"/>
+        {/* 首のウロコ */}
+        {[0,1,2].map(i=>(
+          <ellipse key={i} cx={360+i*30} cy={460-i*25} rx="18" ry="12"
+            fill="none" stroke="#0a1520" strokeWidth="1.5" opacity="0.5"/>
+        ))}
+
+        {/* ===== 頭部 ===== */}
+        {/* 頭の基本形 */}
+        <path d="M290,320 Q300,240 360,200 Q400,175 440,185 Q490,200 510,240 Q530,280 510,330 Q490,370 450,390 Q400,405 350,390 Q300,370 290,320Z"
+          fill="url(#bodyGrad)"/>
+        {/* 頭のウロコ */}
+        {[
+          {cx:340,cy:270,rx:20,ry:13},{cx:390,cy:250,rx:22,ry:14},{cx:440,cy:265,rx:18,ry:12},
+          {cx:360,cy:310,rx:18,ry:12},{cx:410,cy:295,rx:20,ry:13},{cx:455,cy:310,rx:16,ry:11},
+        ].map((e,i)=>(
+          <ellipse key={i} cx={e.cx} cy={e.cy} rx={e.rx} ry={e.ry}
+            fill="none" stroke="#0a1520" strokeWidth="1.5" opacity="0.55"/>
+        ))}
+
+        {/* ===== 目（琥珀色・鋭い） ===== */}
+        {/* 左目（画面右） */}
+        <ellipse cx="455" cy="255" rx="22" ry="18" fill="#1a0a00"/>
+        <ellipse cx="455" cy="255" rx="16" ry="13" fill="#c87800"/>
+        <ellipse cx="455" cy="255" rx="8" ry="11" fill="#1a0800"/>
+        <ellipse cx="455" cy="255" rx="3" ry="4" fill="#000"/>
+        <ellipse cx="451" cy="251" rx="3" ry="2" fill="#fff" opacity="0.6"/>
+        {/* 眉骨（険しい表情） */}
+        <path d="M435,240 Q455,232 475,238" stroke="#050d14" strokeWidth="8" fill="none" strokeLinecap="round"/>
+
+        {/* ===== 口・顎 ===== */}
+        {/* 上顎 */}
+        <path d="M290,330 Q310,360 350,375 Q380,385 400,382"
+          fill="#0d1f2d" stroke="#050d14" strokeWidth="2"/>
+        {/* 下顎（開いた口） */}
+        <path d="M295,345 Q310,390 355,415 Q385,430 410,425 Q430,418 440,400"
+          fill="#1a0a0a" stroke="#050d14" strokeWidth="2"/>
+        {/* 口内の青緑発光 */}
+        <path d="M300,350 Q320,385 360,405 Q390,418 420,410 Q435,402 440,390"
+          fill="#00aaaa" opacity="0.8"/>
+        <path d="M305,355 Q325,382 362,400 Q390,412 418,405"
+          fill="#00ddcc" opacity="0.6"/>
+        {/* 歯（上） */}
         {[0,1,2,3,4].map(i=>(
           <polygon key={i}
-            points={`${60+i*14},${175-i*8} ${66+i*14},${145-i*8} ${72+i*14},${175-i*8}`}
-            fill="#2d5a1b"/>
+            points={`${308+i*26},${352+i*5} ${318+i*26},${375+i*5} ${328+i*26},${352+i*5}`}
+            fill="#e8e8e0" opacity="0.95"/>
         ))}
-        {/* 首 */}
-        <rect x="72" y="145" width="36" height="45" rx="10" fill="#3a7a25"/>
-        {/* 頭 */}
-        <ellipse cx="90" cy="130" rx="38" ry="32" fill="#3a7a25"/>
-        {/* 顎 */}
-        <path d="M60,140 Q90,165 120,140" fill="#2d5a1b"/>
-        {/* 目 */}
-        <ellipse cx="72" cy="118" rx="9" ry="8" fill="#fff"/>
-        <ellipse cx="72" cy="118" rx="5" ry="6" fill="#ff4400"/>
-        <ellipse cx="72" cy="118" rx="2" ry="3" fill="#000"/>
-        {/* 歯 */}
+        {/* 歯（下） */}
         {[0,1,2,3].map(i=>(
-          <polygon key={i} points={`${68+i*8},148 ${72+i*8},160 ${76+i*8},148`} fill="#fff"/>
+          <polygon key={i}
+            points={`${312+i*28},${408-i*3} ${322+i*28},${385-i*3} ${332+i*28},${408-i*3}`}
+            fill="#e8e8e0" opacity="0.9"/>
         ))}
-        {/* 左腕 */}
-        <path d="M45,200 Q20,215 15,240" stroke="#3a7a25" strokeWidth="22" fill="none" strokeLinecap="round"/>
-        <path d="M15,240 Q8,255 5,265 M15,240 Q18,258 22,265 M15,240 Q25,252 30,260"
-          stroke="#2d5a1b" strokeWidth="8" fill="none" strokeLinecap="round"/>
-        {/* 右腕 */}
-        <path d="M135,200 Q158,215 162,238" stroke="#3a7a25" strokeWidth="22" fill="none" strokeLinecap="round"/>
-        {/* 左脚 */}
-        <path d="M70,285 Q60,300 55,318" stroke="#2d5a1b" strokeWidth="26" fill="none" strokeLinecap="round"/>
-        {/* 右脚 */}
-        <path d="M110,285 Q120,300 125,318" stroke="#2d5a1b" strokeWidth="26" fill="none" strokeLinecap="round"/>
-        {/* 熱線 */}
+
+        {/* ===== 右腕（画面左・前に出したクロー） ===== */}
+        {/* 上腕 */}
+        <path d="M310,560 Q240,580 200,620 Q170,650 160,690"
+          stroke="#0d1f2d" strokeWidth="90" fill="none" strokeLinecap="round"/>
+        <path d="M310,560 Q240,580 200,620 Q170,650 160,690"
+          stroke="#1a3a4a" strokeWidth="65" fill="none" strokeLinecap="round"/>
+        {/* 前腕 */}
+        <path d="M160,690 Q145,730 155,770"
+          stroke="#0d1f2d" strokeWidth="75" fill="none" strokeLinecap="round"/>
+        <path d="M160,690 Q145,730 155,770"
+          stroke="#1a3a4a" strokeWidth="55" fill="none" strokeLinecap="round"/>
+        {/* 手のひら */}
+        <ellipse cx="158" cy="785" rx="55" ry="45" fill="#1a3a4a"/>
+        <ellipse cx="158" cy="785" rx="40" ry="32" fill="#0d2535"/>
+        {/* 爪（鋭い） */}
+        {[
+          {x:115,y:770,angle:-30},{x:135,y:755,angle:-10},{x:158,y:750,angle:5},{x:180,y:758,angle:20},{x:198,y:772,angle:35}
+        ].map((c,i)=>(
+          <g key={i} transform={`rotate(${c.angle},${c.x},${c.y})`}>
+            <path d={`M${c.x-6},${c.y} Q${c.x},${c.y-35} ${c.x+6},${c.y}`}
+              fill="#c8c8b8" stroke="#888" strokeWidth="1"/>
+          </g>
+        ))}
+
+        {/* ===== 左腕（画面右・体側） ===== */}
+        <path d="M490,560 Q550,590 580,640 Q600,675 595,710"
+          stroke="#0d1f2d" strokeWidth="75" fill="none" strokeLinecap="round"/>
+        <path d="M490,560 Q550,590 580,640 Q600,675 595,710"
+          stroke="#1a3a4a" strokeWidth="55" fill="none" strokeLinecap="round"/>
+
+        {/* ===== 熱線 ===== */}
         {heatRay && (
-          <g>
-            <line x1="60" y1="150" x2="-200" y2="140" stroke="#00cfff" strokeWidth="12" strokeLinecap="round" opacity="0.9"/>
-            <line x1="60" y1="150" x2="-200" y2="140" stroke="#fff" strokeWidth="4" strokeLinecap="round" opacity="0.8"/>
-            <ellipse cx="60" cy="150" rx="14" ry="10" fill="#00cfff" opacity="0.7"/>
+          <g filter="url(#glow)">
+            {/* 熱線コア */}
+            <path d="M300,370 L-100,200" stroke="url(#heatGrad)" strokeWidth="40" strokeLinecap="round" opacity="0.95"/>
+            <path d="M300,370 L-100,200" stroke="#ffffff" strokeWidth="14" strokeLinecap="round" opacity="0.9"/>
+            <path d="M300,370 L-100,200" stroke="#aaeeff" strokeWidth="6" strokeLinecap="round" opacity="1"/>
+            {/* 口元の発光 */}
+            <ellipse cx="300" cy="370" rx="35" ry="25" fill="#00ddff" opacity="0.7"/>
+            <ellipse cx="300" cy="370" rx="18" ry="13" fill="#ffffff" opacity="0.9"/>
+            {/* 熱線の散乱光 */}
+            {[0,1,2,3].map(i=>(
+              <path key={i}
+                d={`M${295+i*3},${368+i*4} L${-80+i*10},${195+i*15}`}
+                stroke="#88ccff" strokeWidth={3-i*0.5} opacity={0.4-i*0.08} strokeLinecap="round"/>
+            ))}
           </g>
         )}
       </svg>
