@@ -427,10 +427,13 @@ export default function FumikiriApp() {
         // opacity: 消失点付近でフェードアウト
         const opacity = Math.max(0, t);
         const dynRoadW = Math.max(4, ROAD_W * scale);
+        // dir=1(奥向き)=左レーン、dir=-1(手前向き)=右レーン
+        // scaleと連動させることで奥に行くほど中央に寄る
+        const laneOffset = c.dir * 15 * scale;
         return (
           <div key={c.id} className="absolute"
             style={{
-              left:"50%",
+              left:`calc(50% + ${laneOffset}%)`,
               bottom:`${c.y}%`,
               transform:`translateX(-50%) scale(${scale})`,
               transformOrigin:"bottom center",
