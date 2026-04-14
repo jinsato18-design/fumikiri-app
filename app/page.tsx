@@ -216,6 +216,9 @@ export default function FumikiriApp() {
   const [score, setScore]               = useState(0);
   const [danger, setDanger]             = useState(false); // 危険フラッシュ
   const [smokeFrames, setSmokeFrames]   = useState(0);     // 煙アニメ用
+  const [godzilla, setGodzilla]         = useState(false); // ゴジラ襲来
+  const [godzillaX, setGodzillaX]       = useState(110);   // ゴジラX位置(%)
+  const [heatRay, setHeatRay]           = useState(false); // 熱線
 
   const audioCtxRef  = useRef<AudioContext | null>(null);
   const bellRef      = useRef<ReturnType<typeof setInterval>|null>(null);
@@ -352,6 +355,30 @@ export default function FumikiriApp() {
     setCrossers(prev=>[...prev,newC]);
     setScore(s=>s+10);
   },[isOpen]);
+
+  // ゴジラ襲来
+  const startGodzilla = useCallback(()=>{
+    if(godzilla) return;
+    setGodzilla(true);
+    setGodzillaX(110);
+    // 全キャラをクラッシュ
+    setCrossers(prev=>prev.map(c=>({...c,crashed:true})));
+    stopBell(); stopTrainSnd(); stopSmoke();
+    setPhase("warning");
+    // ゴジラが画面右から左へ歩いてくる
+    let x = 110;
+    const walk = setInterval(()=>{
+      x -= 1.2;
+      setGodzillaX(x);
+      // 熱線は中央付近で発射
+      if(x < 70 && x > 30) setHeatRay(true);
+      else setHeatRay(false);
+      if(x < -30) {
+        clearInterval(walk);
+        setHeatRay(false);
+      }
+    }, 50);
+  },[godzilla, stopBell, stopTrainSnd, stopSmoke]);
 
   useEffect(()=>()=>{stopBell();stopTrainSnd();stopSmoke();},[stopBell,stopTrainSnd,stopSmoke]);
 
@@ -522,6 +549,18 @@ export default function FumikiriApp() {
             でんしゃ {trainCount}かい とおったよ！
           </div>
         )}
+        {/* ゴジラ襲来ボタン */}
+        <button onClick={startGodzilla} disabled={godzilla}
+          className="px-6 py-3 rounded-full text-white text-xl font-black shadow-lg transition-all mt-2"
+          style={{
+            background:godzilla?"#555":"linear-gradient(135deg,#1a1a2e,#16213e,#0f3460)",
+            cursor:godzilla?"not-allowed":"pointer",
+            boxShadow:godzilla?"none":"0 6px 24px rgba(0,0,0,0.7), 0 0 20px rgba(0,207,255,0.4)",
+            border:"2px solid #00cfff",
+            letterSpacing:"0.05em",
+          }}>
+          🦖 ゴジラ襲来！！
+        </button>
       </div>
 
       {/* フェーズ表示 */}
@@ -531,6 +570,33 @@ export default function FumikiriApp() {
       {danger&&(
         <div className="absolute inset-0 pointer-events-none"
           style={{background:"rgba(255,0,0,0.25)",zIndex:100}}/>
+      )}
+
+      {/* ゴジラ */}
+      {godzilla && <GodzillaSVG x={godzillaX} heatRay={heatRay}/>}
+
+      {/* ゲームオーバーオーバーレイ */}
+      {godzilla && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none"
+          style={{zIndex:300}}>
+          <div className="text-white font-black text-center"
+            style={{
+              fontSize:"clamp(2rem,8vw,5rem)",
+              textShadow:"0 0 30px #ff4400, 2px 2px 0 #000, -2px -2px 0 #000",
+              animation:"pulse 0.5s infinite alternate",
+            }}>
+            🦖 GAME OVER 🦖
+          </div>
+          <div className="text-yellow-300 font-bold mt-4"
+            style={{fontSize:"clamp(1rem,3vw,2rem)", textShadow:"1px 1px 4px #000"}}>
+            ゴジラが あらわれた！！
+          </div>
+          <button className="mt-8 px-8 py-3 rounded-full font-bold text-white text-xl pointer-events-auto"
+            style={{background:"linear-gradient(135deg,#e74c3c,#c0392b)",boxShadow:"0 6px 20px rgba(231,76,60,0.6)"}}
+            onClick={()=>{setGodzilla(false);setHeatRay(false);setPhase("idle");setCrossers([]);}}>
+            もう一度あそぶ
+          </button>
+        </div>
       )}
     </div>
   );
@@ -658,12 +724,17 @@ function CrosserSVG({type, dir, roadW}:{type:CrosserType; dir:1|-1; roadW:number
     const w=bikeW, h=Math.round(bikeW*2.8);
     const goingAway = dir===1;
     const skinColor="#f5a623"; const bodyColor="#27ae60";
+    // 車輪は側面から見た楕円（横長）で表現
+    const wheelRx = 9, wheelRy = 4;
+    const frontWheelY = goingAway ? 44 : 12;
+    const rearWheelY  = goingAway ? 12 : 44;
     return(
       <svg width={w} height={h} viewBox="0 0 22 56" style={{display:"block"}}>
-        {/* 自転車フレーム（側面） */}
-        <ellipse cx="11" cy={goingAway?44:12} rx="8" ry="8" fill="none" stroke="#333" strokeWidth="2.5"/>
-        <ellipse cx="11" cy={goingAway?12:44} rx="8" ry="8" fill="none" stroke="#333" strokeWidth="2.5"/>
-        <line x1="11" y1="12" x2="11" y2="44" stroke="#555" strokeWidth="2"/>
+        {/* 車輪（側面楕円） */}
+        <ellipse cx="11" cy={frontWheelY} rx={wheelRx} ry={wheelRy} fill="none" stroke="#333" strokeWidth="2.5"/>
+        <ellipse cx="11" cy={rearWheelY}  rx={wheelRx} ry={wheelRy} fill="none" stroke="#333" strokeWidth="2.5"/>
+        {/* フレーム */}
+        <line x1="11" y1={rearWheelY} x2="11" y2={frontWheelY} stroke="#555" strokeWidth="2"/>
         <line x1="5"  y1="28" x2="17" y2="28" stroke="#555" strokeWidth="2"/>
         {/* 乗り手 */}
         <circle cx="11" cy={goingAway?20:36} r="4" fill={skinColor}/>
@@ -1202,6 +1273,65 @@ function PhaseLabel({phase}:{phase:Phase}){
     <div className="absolute top-4 left-1/2 -translate-x-1/2 px-6 py-2 rounded-full text-white text-lg font-bold shadow-lg"
       style={{background:colors[phase],textShadow:"1px 1px 2px rgba(0,0,0,0.4)",transition:"background 0.5s",zIndex:50}}>
       {labels[phase]}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// ゴジラSVG
+// ─────────────────────────────────────────────
+function GodzillaSVG({x, heatRay}:{x:number; heatRay:boolean}){
+  return(
+    <div className="absolute" style={{
+      left:`${x}%`, bottom:"37%",
+      transform:"translateX(-50%)",
+      transformOrigin:"bottom center",
+      zIndex:200, pointerEvents:"none",
+    }}>
+      <svg width="180" height="320" viewBox="0 0 180 320" style={{display:"block"}}>
+        {/* 尻尾 */}
+        <path d="M140,280 Q180,260 200,220 Q210,190 190,170" stroke="#2d5a1b" strokeWidth="18" fill="none" strokeLinecap="round"/>
+        {/* 胴体 */}
+        <ellipse cx="90" cy="220" rx="55" ry="70" fill="#3a7a25"/>
+        {/* 背びれ */}
+        {[0,1,2,3,4].map(i=>(
+          <polygon key={i}
+            points={`${60+i*14},${175-i*8} ${66+i*14},${145-i*8} ${72+i*14},${175-i*8}`}
+            fill="#2d5a1b"/>
+        ))}
+        {/* 首 */}
+        <rect x="72" y="145" width="36" height="45" rx="10" fill="#3a7a25"/>
+        {/* 頭 */}
+        <ellipse cx="90" cy="130" rx="38" ry="32" fill="#3a7a25"/>
+        {/* 顎 */}
+        <path d="M60,140 Q90,165 120,140" fill="#2d5a1b"/>
+        {/* 目 */}
+        <ellipse cx="72" cy="118" rx="9" ry="8" fill="#fff"/>
+        <ellipse cx="72" cy="118" rx="5" ry="6" fill="#ff4400"/>
+        <ellipse cx="72" cy="118" rx="2" ry="3" fill="#000"/>
+        {/* 歯 */}
+        {[0,1,2,3].map(i=>(
+          <polygon key={i} points={`${68+i*8},148 ${72+i*8},160 ${76+i*8},148`} fill="#fff"/>
+        ))}
+        {/* 左腕 */}
+        <path d="M45,200 Q20,215 15,240" stroke="#3a7a25" strokeWidth="22" fill="none" strokeLinecap="round"/>
+        <path d="M15,240 Q8,255 5,265 M15,240 Q18,258 22,265 M15,240 Q25,252 30,260"
+          stroke="#2d5a1b" strokeWidth="8" fill="none" strokeLinecap="round"/>
+        {/* 右腕 */}
+        <path d="M135,200 Q158,215 162,238" stroke="#3a7a25" strokeWidth="22" fill="none" strokeLinecap="round"/>
+        {/* 左脚 */}
+        <path d="M70,285 Q60,300 55,318" stroke="#2d5a1b" strokeWidth="26" fill="none" strokeLinecap="round"/>
+        {/* 右脚 */}
+        <path d="M110,285 Q120,300 125,318" stroke="#2d5a1b" strokeWidth="26" fill="none" strokeLinecap="round"/>
+        {/* 熱線 */}
+        {heatRay && (
+          <g>
+            <line x1="60" y1="150" x2="-200" y2="140" stroke="#00cfff" strokeWidth="12" strokeLinecap="round" opacity="0.9"/>
+            <line x1="60" y1="150" x2="-200" y2="140" stroke="#fff" strokeWidth="4" strokeLinecap="round" opacity="0.8"/>
+            <ellipse cx="60" cy="150" rx="14" ry="10" fill="#00cfff" opacity="0.7"/>
+          </g>
+        )}
+      </svg>
     </div>
   );
 }
