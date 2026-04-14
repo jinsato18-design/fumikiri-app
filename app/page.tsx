@@ -475,7 +475,7 @@ export default function FumikiriApp() {
       {trainVisible && <TrainSVG def={trainDef} smokeFrame={smokeFrames}/>}
 
       {/* 踏切 */}
-      <FumikiriStructure barrierAngle={barrierAngle} isWarning={isWarning}/>
+      <FumikiriStructure barrierAngle={barrierAngle} isWarning={isWarning} W={W} H={H}/>
 
       {/* ===== UI ===== */}
 
@@ -1105,22 +1105,35 @@ function SteamLoco({def,smokeFrame}:{def:TrainDef;smokeFrame:number}){
 // ─────────────────────────────────────────────
 // 踏切構造物（画像に忠実）
 // ─────────────────────────────────────────────
-function FumikiriStructure({barrierAngle,isWarning}:{barrierAngle:number;isWarning:boolean}){
+function FumikiriStructure({barrierAngle,isWarning,W,H}:{barrierAngle:number;isWarning:boolean;W:number;H:number}){
+  // RoadSVGと同じ計算で線路位置での道路左端・右端を求める
+  const cx   = W / 2;
+  const vpY  = H * (1 - 0.62);
+  const yRail = vpY + 4; // 線路のY位置（RoadSVGと同じ）
+  const t = Math.max(0, Math.min(1, (yRail - vpY) / (H - vpY)));
+  const railHalfW = W * (0.20 + 0.70 * t) / 2;
+  const roadLeftX  = cx - railHalfW;  // 線路位置での道路左端X
+  const roadRightX = cx + railHalfW;  // 線路位置での道路右端X
+  const poleH = 220; // ポール高さ（SVG内）
+  // ポールのtop: 線路Y - ポール高さ
+  const poleTop = yRail - poleH;
+
   return(
     <>
-      <div className="absolute" style={{left:"calc(50% - 120px)",top:"calc(62% - 220px)",zIndex:30}}>
-        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="left"/>
+      {/* 左ポール: 道路左端に配置、バーは右（道路内側）へ伸びる */}
+      <div className="absolute" style={{left: roadLeftX - 34, top: poleTop, zIndex:30}}>
+        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="left" bLen={railHalfW * 2}/>
       </div>
-      <div className="absolute" style={{left:"calc(50% + 70px)",top:"calc(62% - 220px)",zIndex:30}}>
-        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="right"/>
+      {/* 右ポール: 道路右端に配置、バーは左（道路内側）へ伸びる */}
+      <div className="absolute" style={{left: roadRightX - 34, top: poleTop, zIndex:30}}>
+        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="right" bLen={railHalfW * 2}/>
       </div>
     </>
   );
 }
 
-function FumikiriPole({isWarning,barrierAngle,side}:{isWarning:boolean;barrierAngle:number;side:"left"|"right"}){
+function FumikiriPole({isWarning,barrierAngle,side,bLen}:{isWarning:boolean;barrierAngle:number;side:"left"|"right";bLen:number}){
   const pH=220;
-  const bLen=180;
   const angle = side==="left" ? barrierAngle : -barrierAngle;
 
   return(
