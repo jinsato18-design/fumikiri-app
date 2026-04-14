@@ -52,8 +52,8 @@ const CROSSER_DEFS: { type: CrosserType; speed: number }[] = [
   { type:"bike",   speed:0.6  },
 ];
 
-// 道路幅（px）
-const ROAD_W = 80;
+// 道路幅（px）- キャラクターサイズの基準値
+const ROAD_W = 400;
 
 // ─────────────────────────────────────────────
 // Audio helpers
@@ -428,15 +428,17 @@ export default function FumikiriApp() {
         const scale   = 0.2 + 0.8 * t;
         // opacity: 消失点付近でフェードアウト
         const opacity = Math.max(0, t);
-        const dynRoadW = Math.max(4, ROAD_W * scale);
+        const dynRoadW = Math.max(20, ROAD_W * scale);
+        // レーンオフセット: dynRoadWの0.6倍分ずらす（左側通行）
+        const laneOffsetPx = c.dir * -dynRoadW * 0.6;
         // 日本の左側通行（向こうへ行く車は左寄りに、こちらへ来る車は右寄りに配置）
         // パースに合わせて、奥に行くほど中央に寄るよう scale を乗算する
         return (
           <div key={c.id} className="absolute"
             style={{
-              left:`calc(50% + ${c.dir * -18 * scale}%)`,
+              left:`calc(50% + ${laneOffsetPx}px)`,
               bottom:`${c.y}%`,
-              transform:`translateX(-50%) scale(${scale})`,
+              transform:`translateX(-50%)`,
               transformOrigin:"bottom center",
               opacity,
               // yが小さい（手前）ほど zIndex を大きくする
