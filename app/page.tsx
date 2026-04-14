@@ -236,7 +236,8 @@ export default function FumikiriApp() {
           if(c.crashed) return c;
           const ny = c.y + c.dir * c.speed * 0.8;
           return {...c, y: ny};
-        }).filter(c=>c.y>-10 && c.y<100);
+        // 手前(y<0)または消失点(y>62)を超えたら削除
+        }).filter(c=>c.y>-5 && c.y<63);
       });
     }, 50);
     return ()=>clearInterval(id);
@@ -334,8 +335,10 @@ export default function FumikiriApp() {
     const newC: Crosser = {
       id: ++crosserIdSeq,
       type,
-      emoji: type,   // SVGで描画するのでtypeをそのまま
-      y: fromBottom ? 2 : 88,
+      emoji: type,
+      // 手前(y=2)から奥(y=60)、または奥(y=60)から手前(y=2)
+      // 消失点はbottom=62%なのでy=61が限界
+      y: fromBottom ? 2 : 60,
       dir: fromBottom ? 1 : -1,
       speed: def.speed,
       crashed: false,
@@ -411,14 +414,16 @@ export default function FumikiriApp() {
 
       {/* 渡り者（踏切の道路を縦断: 線路と垂直方向に移動） */}
       {crossers.map(c=>{
-        // 実際のpxで透視スケール計算
-        // 消失点Y = H*0.38（線路位置）
-        const vpY = H * 0.38;
-        const yBot = H;
-        // bottom=c.y% → 画面上端からのpx = H*(1-c.y/100)
-        const svgY = H * (1 - c.y / 100);
-        const t = Math.max(0, Math.min(1, (svgY - vpY) / (yBot - vpY)));
-        const scale = 0.25 + t * 0.75; // 奥=0.25、手前=1.0
+        // 消失点 = bottom:62% = y=62
+        // t: 0(消失点=奥) 〜 1(手前=y=0)
+        const VP = 62; // 消失点のbottom%
+        const t = Math.max(0, Math.min(1, (c.y - 0) / (VP - 0)));
+        // tが0に近いほど小さく・透明に
+        const perspT = 1 - t; // 0=手前, 1=消失点
+        const scale   = Math.max(0.01, 1 - perspT * 0.97); // 手前=1.0, 消失点≈0.03
+        const opacity = Math.max(0,    1 - perspT * 1.1);  // 消失点でフェードアウト
+        // 道路幅も透視に合わせて動的に
+        const dynRoadW = Math.max(4, ROAD_W * scale);
         return (
           <div key={c.id} className="absolute"
             style={{
@@ -426,6 +431,7 @@ export default function FumikiriApp() {
               bottom:`${c.y}%`,
               transform:`translateX(-50%) scale(${scale})`,
               transformOrigin:"bottom center",
+              opacity,
               zIndex:22,
               filter: c.crashed?"grayscale(1) brightness(0.4)":"none",
               transition:"filter 0.2s",
@@ -434,7 +440,7 @@ export default function FumikiriApp() {
             }}>
             {c.crashed
               ? <span style={{fontSize:24}}>💥</span>
-              : <CrosserSVG type={c.type} dir={c.dir} roadW={ROAD_W}/>
+              : <CrosserSVG type={c.type} dir={c.dir} roadW={dynRoadW}/>
             }
           </div>
         );
