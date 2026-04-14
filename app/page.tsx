@@ -1106,10 +1106,11 @@ function SteamLoco({def,smokeFrame}:{def:TrainDef;smokeFrame:number}){
 // 踏切構造物（画像に忠実）
 // ─────────────────────────────────────────────
 function FumikiriStructure({barrierAngle,isWarning,W,H}:{barrierAngle:number;isWarning:boolean;W:number;H:number}){
-  // RoadSVGと同じ計算で線路位置での道路左端・右端を求める
-  const cx   = W / 2;
-  const vpY  = H * (1 - 0.62);
-  const yRail = vpY + 4; // 線路のY位置（RoadSVGと同じ）
+  // Rail は top:"62%" = H*0.62 の位置
+  const cx    = W / 2;
+  const yRail = H * 0.62 + 17; // 線路の中央Y（top:62% + 高さ34の中央）
+  // RoadSVGと同じ道路幅計算: 消失点vpY=H*0.38、手前=H
+  const vpY   = H * 0.38;
   const t = Math.max(0, Math.min(1, (yRail - vpY) / (H - vpY)));
   const railHalfW = W * (0.20 + 0.70 * t) / 2;
   const roadLeftX  = cx - railHalfW;
