@@ -54,6 +54,8 @@ const CROSSER_DEFS: { type: CrosserType; speed: number }[] = [
 
 // 道路幅（px）- キャラクターサイズの基準値
 const ROAD_W = 400;
+const GODZILLA_THEME_VIDEO_ID = "wr3Ehj3wycY";
+const GODZILLA_THEME_PLAYER_ID = "godzilla-theme-player";
 
 // ─────────────────────────────────────────────
 // Audio helpers
@@ -225,6 +227,9 @@ export default function FumikiriApp() {
   const trainSndRef  = useRef<{stop:()=>void}|null>(null);
   const crosserTimer = useRef<ReturnType<typeof setInterval>|null>(null);
   const smokeTimer   = useRef<ReturnType<typeof setInterval>|null>(null);
+  const godzillaThemePlayerRef = useRef<{ playVideo?: () => void; stopVideo?: () => void; seekTo?: (seconds: number, allowSeekAhead?: boolean) => void; destroy?: () => void } | null>(null);
+  const godzillaThemeReadyRef = useRef(false);
+  const godzillaThemePendingPlayRef = useRef(false);
 
   const trainDef = TRAINS.find(t=>t.id===selectedTrain)!;
   const isWarning = ["warning","closed","passing"].includes(phase);
@@ -303,6 +308,94 @@ export default function FumikiriApp() {
     setSmokeFrames(0);
   },[]);
 
+  const stopGodzillaTheme = useCallback(()=>{
+    godzillaThemePendingPlayRef.current = false;
+    try {
+      godzillaThemePlayerRef.current?.stopVideo?.();
+    } catch { /**/ }
+  },[]);
+
+  const ensureGodzillaThemePlayer = useCallback(()=>{
+    if (typeof window === "undefined") return;
+    if (godzillaThemePlayerRef.current) return;
+
+    const ytWindow = window as Window & {
+      YT?: { Player?: new (elementId: string, options: Record<string, unknown>) => { playVideo?: () => void } };
+      onYouTubeIframeAPIReady?: () => void;
+    };
+
+    if (!document.getElementById(GODZILLA_THEME_PLAYER_ID)) {
+      const mount = document.createElement("div");
+      mount.id = GODZILLA_THEME_PLAYER_ID;
+      mount.style.position = "fixed";
+      mount.style.left = "-9999px";
+      mount.style.width = "1px";
+      mount.style.height = "1px";
+      mount.style.pointerEvents = "none";
+      document.body.appendChild(mount);
+    }
+
+    const createPlayer = () => {
+      if (!ytWindow.YT?.Player || godzillaThemePlayerRef.current) return;
+      godzillaThemePlayerRef.current = new ytWindow.YT.Player(GODZILLA_THEME_PLAYER_ID, {
+        width: "1",
+        height: "1",
+        videoId: GODZILLA_THEME_VIDEO_ID,
+        playerVars: {
+          autoplay: 0,
+          controls: 0,
+          disablekb: 1,
+          fs: 0,
+          modestbranding: 1,
+          rel: 0,
+          playsinline: 1,
+        },
+        events: {
+          onReady: () => {
+            godzillaThemeReadyRef.current = true;
+            if (godzillaThemePendingPlayRef.current) {
+              godzillaThemePendingPlayRef.current = false;
+              try {
+                godzillaThemePlayerRef.current?.seekTo?.(0, true);
+                godzillaThemePlayerRef.current?.playVideo?.();
+              } catch { /**/ }
+            }
+          },
+        },
+      });
+    };
+
+    if (ytWindow.YT?.Player) {
+      createPlayer();
+      return;
+    }
+
+    const prevReady = ytWindow.onYouTubeIframeAPIReady;
+    ytWindow.onYouTubeIframeAPIReady = () => {
+      if (prevReady) prevReady();
+      createPlayer();
+    };
+
+    if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
+      const script = document.createElement("script");
+      script.src = "https://www.youtube.com/iframe_api";
+      script.async = true;
+      document.head.appendChild(script);
+    }
+  },[]);
+
+  const playGodzillaTheme = useCallback(()=>{
+    ensureGodzillaThemePlayer();
+    if (godzillaThemeReadyRef.current && godzillaThemePlayerRef.current) {
+      try {
+        godzillaThemePlayerRef.current.seekTo?.(0, true);
+        godzillaThemePlayerRef.current.playVideo?.();
+      } catch { /**/ }
+      return;
+    }
+    godzillaThemePendingPlayRef.current = true;
+  },[ensureGodzillaThemePlayer]);
+
   const startSequence = useCallback(()=>{
     if(!canPress) return;
     setTrainCount(c=>c+1);
@@ -360,15 +453,16 @@ export default function FumikiriApp() {
   const startGodzilla = useCallback(()=>{
     if(godzilla) return;
     setGodzilla(true);
+    playGodzillaTheme();
     // 全キャラをクラッシュ
     setCrossers(prev=>prev.map(c=>({...c,crashed:true})));
     stopBell(); stopTrainSnd(); stopSmoke();
     setPhase("warning");
     // 少し遅れて熱線発射
     setTimeout(()=>setHeatRay(true), 600);
-  },[godzilla, stopBell, stopTrainSnd, stopSmoke]);
+  },[godzilla, playGodzillaTheme, stopBell, stopTrainSnd, stopSmoke]);
 
-  useEffect(()=>()=>{stopBell();stopTrainSnd();stopSmoke();},[stopBell,stopTrainSnd,stopSmoke]);
+  useEffect(()=>()=>{stopBell();stopTrainSnd();stopSmoke();stopGodzillaTheme();godzillaThemePlayerRef.current?.destroy?.();},[stopBell,stopTrainSnd,stopSmoke,stopGodzillaTheme]);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden select-none"
@@ -565,7 +659,7 @@ export default function FumikiriApp() {
 
       {/* ゲームオーバーオーバーレイ */}
       {godzilla && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none"
+        <div className="absolute inset-x-0 bottom-[8%] flex flex-col items-center pointer-events-none"
           style={{zIndex:300}}>
           <div className="text-white font-black text-center"
             style={{
@@ -581,7 +675,7 @@ export default function FumikiriApp() {
           </div>
           <button className="mt-8 px-8 py-3 rounded-full font-bold text-white text-xl pointer-events-auto"
             style={{background:"linear-gradient(135deg,#e74c3c,#c0392b)",boxShadow:"0 6px 20px rgba(231,76,60,0.6)"}}
-            onClick={()=>{setGodzilla(false);setHeatRay(false);setPhase("idle");setCrossers([]);}}>
+            onClick={()=>{stopGodzillaTheme();setGodzilla(false);setHeatRay(false);setPhase("idle");setCrossers([]);}}>
             もう一度あそぶ
           </button>
         </div>
@@ -624,6 +718,7 @@ function ElectricPole({x}:{x:string}){
 }
 
 function Building({x,w,h,color,roofColor,windows}:{x:string;w:number;h:number;color:string;roofColor:string;windows:number}){
+  const showChimney = ((w * 31 + h * 17 + x.charCodeAt(0)) % 2) === 0;
   return(
     <div className="absolute" style={{left:x,bottom:"calc(37% + 32px)",zIndex:4}}>
       <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
@@ -658,7 +753,7 @@ function Building({x,w,h,color,roofColor,windows}:{x:string;w:number;h:number;co
         {/* 玄関上の庇 */}
         <rect x={w/2-12} y={h-26} width="24" height="4" rx="1" fill={roofColor}/>
         {/* 煙突 */}
-        {Math.random()>0.5 && (
+        {showChimney && (
           <rect x={w*0.7} y={-h*0.2} width="4" height={h*0.15} fill="#666" stroke="#444" strokeWidth="0.5"/>
         )}
       </svg>
