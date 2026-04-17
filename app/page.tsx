@@ -1227,7 +1227,7 @@ function FumikiriStructure({barrierAngle,isWarning,W,H}:{barrierAngle:number;isW
   const poleTop = yRail - scaledH * overallScale;
   // ポールのleft: ポール中心(SVG内x=34)をpoleScaleした分オフセット
   const poleOffsetX = 34 * poleScale;
-  const wrapperWidth = roadW + 80 * poleScale;
+  const wrapperWidth = roadW / overallScale + 80 * poleScale;
   const wrapperHeight = scaledH;
 
   return(
@@ -1243,7 +1243,7 @@ function FumikiriStructure({barrierAngle,isWarning,W,H}:{barrierAngle:number;isW
       <div className="absolute" style={{left:0, top:0}}>
         <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="left" bLen={roadW} poleScale={poleScale} barScale={barScale}/>
       </div>
-      <div className="absolute" style={{left: roadW, top:0}}>
+      <div className="absolute" style={{left: roadW / overallScale, top:0}}>
         <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="right" bLen={roadW} poleScale={poleScale} barScale={barScale}/>
       </div>
     </div>
