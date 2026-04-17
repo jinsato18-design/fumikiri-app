@@ -1219,22 +1219,34 @@ function FumikiriStructure({barrierAngle,isWarning,W,H}:{barrierAngle:number;isW
   const pH = 220;
   const scaledH = (pH + 35) * poleScale;
 
-  // ポールのtop: 線路Y - スケール後のポール高さ
-  const poleTop = yRail - scaledH;
+  // 全体の高さをウインドウ高さの 1/3 にするための追加スケール
+  const targetHeight = H / 3;
+  const overallScale = Math.max(0.01, targetHeight / scaledH);
+
+  // ポールのtop: 線路Y - スケール後の構造物高さ
+  const poleTop = yRail - scaledH * overallScale;
   // ポールのleft: ポール中心(SVG内x=34)をpoleScaleした分オフセット
   const poleOffsetX = 34 * poleScale;
+  const wrapperWidth = roadW + 80 * poleScale;
+  const wrapperHeight = scaledH;
 
   return(
-    <>
-      {/* 左ポール */}
-      <div className="absolute" style={{left: roadLeftX - poleOffsetX, top: poleTop, zIndex:30}}>
+    <div className="absolute" style={{
+      left: roadLeftX - poleOffsetX,
+      top: poleTop,
+      width: wrapperWidth,
+      height: wrapperHeight,
+      transform: `scale(${overallScale})`,
+      transformOrigin: "top left",
+      zIndex: 30,
+    }}>
+      <div className="absolute" style={{left:0, top:0}}>
         <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="left" bLen={roadW} poleScale={poleScale} barScale={barScale}/>
       </div>
-      {/* 右ポール */}
-      <div className="absolute" style={{left: roadRightX - poleOffsetX, top: poleTop, zIndex:30}}>
+      <div className="absolute" style={{left: roadW, top:0}}>
         <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="right" bLen={roadW} poleScale={poleScale} barScale={barScale}/>
       </div>
-    </>
+    </div>
   );
 }
 
