@@ -1241,20 +1241,20 @@ function FumikiriStructure({barrierAngle,isWarning,W,H}:{barrierAngle:number;isW
       zIndex: 30,
     }}>
       <div className="absolute" style={{left:0, top:0}}>
-        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="left" bLen={roadW} poleScale={poleScale} barScale={barScale}/>
+        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="left" bLen={roadW} poleScale={poleScale} overallScale={overallScale}/>
       </div>
       <div className="absolute" style={{left: roadW / overallScale, top:0}}>
-        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="right" bLen={roadW} poleScale={poleScale} barScale={barScale}/>
+        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="right" bLen={roadW} poleScale={poleScale} overallScale={overallScale}/>
       </div>
     </div>
   );
 }
 
-function FumikiriPole({isWarning,barrierAngle,side,bLen,poleScale,barScale}:{isWarning:boolean;barrierAngle:number;side:"left"|"right";bLen:number;poleScale:number;barScale:number}){
+function FumikiriPole({isWarning,barrierAngle,side,bLen,poleScale,overallScale}:{isWarning:boolean;barrierAngle:number;side:"left"|"right";bLen:number;poleScale:number;overallScale:number}){
   const pH=220;
   const angle = side==="left" ? barrierAngle : -barrierAngle;
-  // SVG内でのバー長: 実際の道路幅をpoleScaleで割り戻す
-  const svgBarLen = Math.round(180 * (barScale / poleScale));
+  // SVG内でのバー長: 道路幅を全体スケールとポールスケールで割った値にする
+  const svgBarLen = bLen / poleScale / overallScale;
 
   return(
     <svg
