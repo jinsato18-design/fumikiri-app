@@ -209,6 +209,8 @@ let crosserIdSeq = 0;
 
 export default function FumikiriApp() {
   const { w: W, h: H } = useWindowSize();
+  // rail center Y (matches Rail top:62% and half of rail container height)
+  const yRail = H * 0.62 + 28;
   const [phase, setPhase]               = useState<Phase>("idle");
   const [barrierAngle, setBarrierAngle] = useState(-85); // -85=上向き, 0=水平
   const [trainVisible, setTrainVisible] = useState(false);
@@ -221,6 +223,7 @@ export default function FumikiriApp() {
   const [godzilla, setGodzilla]         = useState(false); // ゴジラ襲来
   const [godzillaX, setGodzillaX]       = useState(110);   // ゴジラX位置(%)
   const [heatRay, setHeatRay]           = useState(false); // 熱線
+  const [trainFromLeft, setTrainFromLeft] = useState(true); // next train direction
 
   const audioCtxRef  = useRef<AudioContext | null>(null);
   const bellRef      = useRef<ReturnType<typeof setInterval>|null>(null);
@@ -412,6 +415,8 @@ export default function FumikiriApp() {
         trainSndRef.current = trainDef.id==="steam"
           ? createSteamChuff(ctx) : createRumble(ctx,trainDef.id);
         if(trainDef.id==="steam") startSmoke();
+        // alternate direction each time (true = left->right)
+        setTrainFromLeft(prev => !prev);
         setTrainVisible(true);
         setPhase("passing");
 
@@ -529,31 +534,44 @@ export default function FumikiriApp() {
 
       {/* 渡り者（踏切の道路を縦断: 線路と垂直方向に移動） */}
       {crossers.map(c=>{
-        // VP = bottom:62%。y小=手前(bottom低い), y大=奥(消失点に近い)
-        // t: 1=手前, 0=奥
-        const VP = 62;
-        const t = Math.max(0, Math.min(1, 1 - c.y / VP));
-        // scale: 手前1.0 〜 奥0.2
-        const scale   = 0.2 + 0.8 * t;
-        // opacity: 消失点付近でフェードアウト
+        // c.y is expressed as bottom percent (0..100)
+        // Compute road width at this vertical position using the same math as RoadSVG
+        const cx = W / 2;
+        const vpY = H * (1 - 0.62); // 消失点Y
+        const yBot = H;
+        // c.y is bottom% (0=bottom/front, larger=up/toward vanishing point)
+        // convert to top-based Y in px for RoadSVG calculations
+        const yPx = H * (1 - c.y / 100);
+        const tW = Math.max(0, Math.min(1, (yPx - vpY) / (yBot - vpY))); // 0=奥,1=手前
+        const roadHalfWAtY = W * (0.20 + 0.70 * tW) / 2; // half width in px
+        const fullRoadWAtY = Math.max(20, roadHalfWAtY * 2);
+        // レーンオフセット: 半幅 (roadHalfWAtY) を基準にして配置する（はみ出し防止）
+        let laneOffsetPx = c.dir * -roadHalfWAtY * 0.6;
+        const maxOffset = roadHalfWAtY * 0.9; // 要素が道路外に出ないよう最大値を制限
+        laneOffsetPx = Math.sign(laneOffsetPx) * Math.min(Math.abs(laneOffsetPx), maxOffset);
+        // 見た目スケールは tW（0=奥,1=手前）を使って計算し、
+        // サイズは dynRoadW（基準ROAD_Wにscaleを掛けた値）で決定する。
+        const t = tW; // 0..1 (奥→手前)
+        const scale = 0.2 + 0.8 * t;
+        // Compute drawable width based on actual road width at this Y so sizes follow the road
+        const dynRoadWRaw = Math.round(fullRoadWAtY * 0.6);
+        // Cap dynRoadW to avoid excessive sizes on very wide screens:
+        // - at least 12px, - at most 12% of viewport width, and not hugely larger than base ROAD_W
+        const dynRoadW = Math.max(12, Math.min(dynRoadWRaw, Math.round(Math.min(W * 0.12, ROAD_W * 1.1))));
         const opacity = Math.max(0, t);
-        const dynRoadW = Math.max(20, ROAD_W * scale);
-        // レーンオフセット: dynRoadWの0.6倍分ずらす（左側通行）
-        const laneOffsetPx = c.dir * -dynRoadW * 0.6;
-        // 日本の左側通行（向こうへ行く車は左寄りに、こちらへ来る車は右寄りに配置）
-        // パースに合わせて、奥に行くほど中央に寄るよう scale を乗算する
+
         return (
           <div key={c.id} className="absolute"
             style={{
-              left:`calc(50% + ${laneOffsetPx}px)`,
-              bottom:`${c.y}%`,
+              left:`${cx + laneOffsetPx}px`,
+              // sink element slightly (pixels) so it visually sits on the road
+              bottom:`calc(${c.y}% - ${Math.round(dynRoadW * 0.08)}px)`,
               transform:`translateX(-50%)`,
               transformOrigin:"bottom center",
               opacity,
-              // yが小さい（手前）ほど zIndex を大きくする
               zIndex: Math.floor(100 - c.y),
               filter: c.crashed?"grayscale(1) brightness(0.4)":"none",
-              transition:"filter 0.2s",
+              transition:"filter 0.2s, transform 0.12s",
               display:"flex",
               justifyContent:"center",
             }}>
@@ -566,10 +584,10 @@ export default function FumikiriApp() {
       })}
 
       {/* 電車 */}
-      {trainVisible && <TrainSVG def={trainDef} smokeFrame={smokeFrames}/>}
+      {trainVisible && <TrainSVG def={trainDef} smokeFrame={smokeFrames} fromLeft={trainFromLeft} yRail={yRail}/>}
 
       {/* 踏切 */}
-      <FumikiriStructure barrierAngle={barrierAngle} isWarning={isWarning} W={W} H={H}/>
+      <FumikiriStructure barrierAngle={barrierAngle} isWarning={isWarning} W={W} H={H} trainFromLeft={trainFromLeft}/>
 
       {/* ===== UI ===== */}
 
@@ -592,7 +610,7 @@ export default function FumikiriApp() {
       </div>
 
       {/* 渡らせるボタン */}
-      <div className="absolute left-4 top-1/2 -translate-y-1/2 flex flex-col gap-2" style={{zIndex:50}}>
+      <div className="absolute top-1/2 -translate-y-1/2 flex flex-col gap-2" style={{zIndex:50, left: 'clamp(40px, 8%, 120px)'}}>
         <div className="text-white text-xs font-bold mb-1 text-center"
           style={{textShadow:"1px 1px 2px #000"}}>わたらせる</div>
         {CROSSER_DEFS.map(d=>(
@@ -874,6 +892,65 @@ function RoadSVG({ W, H }: { W: number; H: number }) {
   const yBot = H;
   const yFar = vpY + 2;        // 奥端（消失点のすぐ手前）
 
+  // moving car refs and animation
+  const pathRef = useRef<SVGPathElement | null>(null);
+  const carRef = useRef<SVGGElement | null>(null);
+  const lenRef = useRef<number>(0);
+  const startRef = useRef<number | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const roRef = useRef<ResizeObserver | null>(null);
+
+  // Animation loop: mount once and do not remount on W/H changes
+  useEffect(() => {
+    const period = 4000; // 4秒で一周
+
+    function step(now: number) {
+      if (startRef.current === null) startRef.current = now;
+      const t = ((now - startRef.current) / period) % 1; // 0..1 周期
+      const pathEl = pathRef.current;
+      const carEl = carRef.current;
+      if (pathEl && carEl) {
+        const len = lenRef.current || (pathEl.getTotalLength && pathEl.getTotalLength());
+        try {
+          const p = pathEl.getPointAtLength(len * t);
+          // 先読みはラップ（ループ対応）
+          const next = pathEl.getPointAtLength(len * ((t + 0.01) % 1));
+          const angle = Math.atan2(next.y - p.y, next.x - p.x) * 180 / Math.PI;
+          carEl.setAttribute('transform', `translate(${p.x} ${p.y}) rotate(${angle})`);
+        } catch {
+          // ignore transient errors
+        }
+      }
+      rafRef.current = requestAnimationFrame(step);
+    }
+
+    rafRef.current = requestAnimationFrame(step);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, []);
+
+  // Keep length up-to-date and observe container (SVG) rather than the <path> itself
+  useEffect(() => {
+    const pathEl = pathRef.current;
+    if (!pathEl) return;
+    try { lenRef.current = pathEl.getTotalLength(); } catch {}
+
+    const target = (pathEl.ownerSVGElement as Element) ?? (pathEl as Element);
+    const ro = new ResizeObserver(() => {
+      try { if (pathEl) lenRef.current = pathEl.getTotalLength(); } catch {}
+    });
+    ro.observe(target);
+    roRef.current = ro;
+
+    // offset-path サポートのプログレッシブエンハンスメント表示
+    const supportsOffsetPath = typeof CSS !== "undefined" && typeof (CSS as any).supports === "function" && (CSS as any).supports('offset-distance', '0%');
+    if (carRef.current) {
+      if (supportsOffsetPath) carRef.current.setAttribute('data-offset-path', 'supported');
+      else carRef.current.setAttribute('data-offset-path', 'fallback-js');
+    }
+
+    return () => { ro.disconnect(); roRef.current = null; };
+  }, [W, H]);
+
   // y位置での道幅: 手前(yBot)=W*0.9、奥(vpY)=W*0.20 の線形補間
   const roadHalfW = (y: number) => {
     const t = Math.max(0, Math.min(1, (y - vpY) / (yBot - vpY))); // 0=奥, 1=手前
@@ -909,6 +986,9 @@ function RoadSVG({ W, H }: { W: number; H: number }) {
       viewBox={`0 0 ${W} ${H}`}
       preserveAspectRatio="none"
     >
+      {/* 中心経路（車をパスに沿わせるための参照パス） */}
+      <path id="road-center-path" ref={pathRef} d={`M ${W/2} ${H} L ${W/2} ${Math.max(0, H * (1 - 0.62) + 2)}`} fill="none" stroke="transparent" />
+
       {/* 道路面（台形: 手前=90%幅、奥=20%幅） */}
       <polygon
         points={pts([
@@ -943,6 +1023,9 @@ function RoadSVG({ W, H }: { W: number; H: number }) {
         ])}
         fill="#5a5a5a" opacity="0.5"
       />
+
+{/* 移動車（非表示・パス追跡用のアンカーとして残す） */}
+<g id="moving-car" ref={carRef} transform={`translate(${cx} ${yBot})`} style={{pointerEvents:'none'}}/>
     </svg>
   );
 }
@@ -951,17 +1034,26 @@ function RoadSVG({ W, H }: { W: number; H: number }) {
 // 線路
 // ─────────────────────────────────────────────
 function Rail(){
+  // Draw a double-track: two parallel tracks (each with two rails) with sleepers across
   return(
-    <div className="absolute left-0 w-full" style={{top:"62%",height:34,zIndex:10}}>
+    <div className="absolute left-0 w-full" style={{top:"62%",height:56,zIndex:10}}>
       {Array.from({length:36}).map((_,i)=>(
         <div key={i} className="absolute"
-          style={{left:`${i*2.85}%`,top:0,width:17,height:34,
+          style={{left:`${i*2.85}%`,top:0,width:17,height:56,
             background:"linear-gradient(180deg,#7B5230 0%,#5a3a1a 100%)",borderRadius:2}}/>
       ))}
-      <div className="absolute w-full" style={{top:3,height:8,
+      {/* left track rails */}
+      <div className="absolute w-full" style={{top:6,height:6,
         background:"linear-gradient(180deg,#d8d8d8 0%,#a8a8a8 50%,#c8c8c8 100%)",
         boxShadow:"0 2px 5px rgba(0,0,0,0.55)"}}/>
-      <div className="absolute w-full" style={{top:23,height:8,
+      <div className="absolute w-full" style={{top:18,height:6,
+        background:"linear-gradient(180deg,#d8d8d8 0%,#a8a8a8 50%,#c8c8c8 100%)",
+        boxShadow:"0 2px 5px rgba(0,0,0,0.55)"}}/>
+      {/* right track rails */}
+      <div className="absolute w-full" style={{top:32,height:6,
+        background:"linear-gradient(180deg,#d8d8d8 0%,#a8a8a8 50%,#c8c8c8 100%)",
+        boxShadow:"0 2px 5px rgba(0,0,0,0.55)"}}/>
+      <div className="absolute w-full" style={{top:44,height:6,
         background:"linear-gradient(180deg,#d8d8d8 0%,#a8a8a8 50%,#c8c8c8 100%)",
         boxShadow:"0 2px 5px rgba(0,0,0,0.55)"}}/>
     </div>
@@ -971,14 +1063,31 @@ function Rail(){
 // ─────────────────────────────────────────────
 // 電車
 // ─────────────────────────────────────────────
-function TrainSVG({def,smokeFrame}:{def:TrainDef;smokeFrame:number}){
-  return(
-    <div className="absolute train-running"
-      style={{top:"calc(62% - 90px)",left:0,zIndex:20,["--train-speed" as string]:`${def.speed}s`}}>
-      {def.id==="shinkansen" && <Shinkansen def={def}/>}
-      {def.id==="express"    && <Express def={def}/>}
-      {def.id==="steam"      && <SteamLoco def={def} smokeFrame={smokeFrame}/>}
-      {def.id==="local"      && <LocalTrain def={def}/>}
+function TrainSVG({def,smokeFrame,fromLeft,yRail}:{def:TrainDef;smokeFrame:number;fromLeft:boolean;yRail:number}){
+  // Train vertical alignment based on the rail container defined in `Rail()`.
+  // Rail container: top = H * 0.62, height = 56. We receive `yRail` as container center (top + 28).
+  const TRAIN_HEIGHT = 88; // SVG train graphic height
+  const containerHalf = 28; // half of rail container height
+  const containerTop = yRail - containerHalf;
+  const upperTrackCenter = containerTop + 12; // upper track center (top track)
+  const lowerTrackCenter = containerTop + 38; // lower track center (bottom track)
+  const trackSpacing = lowerTrackCenter - upperTrackCenter;
+
+  // Position rules:
+  // - fromLeft (left->right): place one track-spacing above the right->left position
+  // - !fromLeft (right->left): place at upperTrackCenter (top track)
+  const targetCenter = fromLeft ? (upperTrackCenter - trackSpacing) : upperTrackCenter;
+  const topPx = Math.round(targetCenter - TRAIN_HEIGHT / 2);
+  const cls = fromLeft ? "absolute train-running" : "absolute train-running train-running--rtl";
+  const varKey = "--train-speed";
+  return (
+    <div className={cls} style={{top: `${topPx}px`, left: 0, zIndex: 20, [varKey]: `${def.speed}s`}}>
+      <div style={{transform: fromLeft ? 'none' : 'scaleX(-1)'}}>
+        {def.id==="shinkansen" && <Shinkansen def={def}/>}
+        {def.id==="express"    && <Express def={def}/>}
+        {def.id==="steam"      && <SteamLoco def={def} smokeFrame={smokeFrame}/>}
+        {def.id==="local"      && <LocalTrain def={def}/>}
+      </div>
     </div>
   );
 }
@@ -1200,10 +1309,10 @@ function SteamLoco({def,smokeFrame}:{def:TrainDef;smokeFrame:number}){
 // ─────────────────────────────────────────────
 // 踏切構造物（画像に忠実）
 // ─────────────────────────────────────────────
-function FumikiriStructure({barrierAngle,isWarning,W,H}:{barrierAngle:number;isWarning:boolean;W:number;H:number}){
+function FumikiriStructure({barrierAngle,isWarning,W,H,trainFromLeft}:{barrierAngle:number;isWarning:boolean;W:number;H:number;trainFromLeft:boolean}){
   // Rail は top:"62%" = H*0.62 の位置
   const cx    = W / 2;
-  const yRail = H * 0.62 + 17; // 線路の中央Y（top:62% + 高さ34の中央）
+  const yRail = H * 0.62 + 28; // 線路の中央Y（top:62% + 高さ56の中央）
   // RoadSVGと同じ道路幅計算: 消失点vpY=H*0.38、手前=H
   const vpY   = H * 0.38;
   const t = Math.max(0, Math.min(1, (yRail - vpY) / (H - vpY)));
@@ -1241,16 +1350,16 @@ function FumikiriStructure({barrierAngle,isWarning,W,H}:{barrierAngle:number;isW
       zIndex: 30,
     }}>
       <div className="absolute" style={{left:0, top:0}}>
-        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="left" bLen={roadW} poleScale={poleScale} overallScale={overallScale}/>
+        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="left" bLen={roadW} poleScale={poleScale} overallScale={overallScale} trainFromLeft={trainFromLeft}/>
       </div>
       <div className="absolute" style={{left: roadW / overallScale, top:0}}>
-        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="right" bLen={roadW} poleScale={poleScale} overallScale={overallScale}/>
+        <FumikiriPole isWarning={isWarning} barrierAngle={barrierAngle} side="right" bLen={roadW} poleScale={poleScale} overallScale={overallScale} trainFromLeft={trainFromLeft}/>
       </div>
     </div>
   );
 }
 
-function FumikiriPole({isWarning,barrierAngle,side,bLen,poleScale,overallScale}:{isWarning:boolean;barrierAngle:number;side:"left"|"right";bLen:number;poleScale:number;overallScale:number}){
+function FumikiriPole({isWarning,barrierAngle,side,bLen,poleScale,overallScale,trainFromLeft}:{isWarning:boolean;barrierAngle:number;side:"left"|"right";bLen:number;poleScale:number;overallScale:number;trainFromLeft:boolean}){
   const pH=220;
   const angle = side==="left" ? barrierAngle : -barrierAngle;
   // SVG内でのバー長: 道路幅を全体スケールとポールスケールで割った値にする
@@ -1330,11 +1439,11 @@ function FumikiriPole({isWarning,barrierAngle,side,bLen,poleScale,overallScale}:
       <rect x="18" y="96" width="32" height="24" rx="4" fill="#1a1a1a" stroke="#333" strokeWidth="1.5"/>
       <rect x="20" y="98" width="28" height="10" rx="2" fill="#111"/>
       <rect x="20" y="110" width="28" height="8"  rx="2" fill="#111"/>
-      {/* 矢印 */}
+      {/* 矢印: 実際の進行方向のみ赤にする */}
       <text x="34" y="107" textAnchor="middle" fontSize="9" fontWeight="bold"
-        fill={isWarning?"#ff2200":"#550000"}>→</text>
+        fill={isWarning && trainFromLeft ? "#ff2200" : "#550000"}>→</text>
       <text x="34" y="117" textAnchor="middle" fontSize="9" fontWeight="bold"
-        fill={isWarning?"#ff2200":"#550000"}>←</text>
+        fill={isWarning && !trainFromLeft ? "#ff2200" : "#550000"}>←</text>
 
       {/* ===== 遮断機 ===== */}
       <g style={{
@@ -1412,10 +1521,9 @@ function GodzillaSVG({heatRay}:{heatRay:boolean}){
   return(
     <div className="absolute inset-0 flex items-center justify-center" style={{zIndex:200, pointerEvents:"none"}}>
       <svg
-        width="100%" height="100%"
         viewBox="0 0 1024 892"
         preserveAspectRatio="xMidYMid meet"
-        style={{display:"block"}}
+        style={{display:"block", maxWidth:"90vw", maxHeight:"90vh", width:"auto", height:"auto", pointerEvents:"none"}}
         dangerouslySetInnerHTML={{__html: godzillaSVGInner}}
       />
     </div>

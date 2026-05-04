@@ -27,6 +27,13 @@ body {
 .train-running {
   animation: train-pass var(--train-speed, 3.5s) linear forwards;
 }
+@keyframes train-pass-rtl {
+  from { transform: translateX(110vw); }
+  to   { transform: translateX(-700px); }
+}
+.train-running--rtl {
+  animation: train-pass-rtl var(--train-speed, 3.5s) linear forwards;
+}
 
 /* 雲 */
 @keyframes cloud-move {
