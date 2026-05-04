@@ -1080,8 +1080,12 @@ function TrainSVG({def,smokeFrame,fromLeft,yRail}:{def:TrainDef;smokeFrame:numbe
   const topPx = Math.round(targetCenter - TRAIN_HEIGHT / 2);
   const cls = fromLeft ? "absolute train-running" : "absolute train-running train-running--rtl";
   const varKey = "--train-speed";
+  // Build style object first, then assign the custom property to avoid TS error
+  const trainStyle = { top: `${topPx}px`, left: 0, zIndex: 20 } as React.CSSProperties;
+  (trainStyle as any)[varKey] = `${def.speed}s`;
+
   return (
-    <div className={cls} style={{top: `${topPx}px`, left: 0, zIndex: 20, [varKey]: `${def.speed}s`}}>
+    <div className={cls} style={trainStyle}>
       <div style={{transform: fromLeft ? 'none' : 'scaleX(-1)'}}>
         {def.id==="shinkansen" && <Shinkansen def={def}/>}
         {def.id==="express"    && <Express def={def}/>}
